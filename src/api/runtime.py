@@ -920,6 +920,9 @@ class SessionRuntime:
         up = sum(r["state"] == "UP_FROM_BASELINE" for r in fresh)
         down = sum(r["state"] == "DOWN_FROM_BASELINE" for r in fresh)
         flat = sum(r["state"] == "AT_BASELINE" for r in fresh)
+        session_state = _session_state(now)
+        market_active = session_state in {"OPEN", "SQUARE-OFF WINDOW"}
+        sector_rows = fresh if market_active else [r for r in rows if r["state"] != "NO_DATA"]
         universe_snapshot = load_snapshot(self.store.root)
         subscribed_stocks = {r["symbol"] for r in rows}
         if universe_snapshot and set(universe_snapshot.symbols).issubset(subscribed_stocks):
@@ -937,13 +940,14 @@ class SessionRuntime:
             "mode": self.mode,
             "asof": now.isoformat(),
             "trade_date": self.trade_date.isoformat(),
-            "session_state": _session_state(now),
+            "session_state": session_state,
             "coverage": {"subscribed": len(rows), "fresh": len(fresh), "universe": universe,
                          "stale": sum(bool(r["stale"]) for r in rows),
                          "without_bars": sum(r["state"] == "NO_DATA" for r in rows)},
             "breadth": {"up_from_baseline": up, "down_from_baseline": down,
                         "at_baseline": flat, "sample": len(fresh)},
-            "sectors": sector_breadth(fresh, SECTORS),
+            "sectors": sector_breadth(sector_rows, SECTORS),
+            "sectors_are_historical": not market_active,
             "indices": {"state": "SUBSCRIBED" if index_rows else "NOT_SUBSCRIBED",
                         "symbols": index_rows,
                         "detail": "Index data is shown only when those indices are subscribed and fresh."},
