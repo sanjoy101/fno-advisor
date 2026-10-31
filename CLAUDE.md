@@ -934,7 +934,11 @@ signal, and not a claim of predictive edge. Its current formula skips the first 
 intraday volume, and path efficiency; choppy rows are excluded by a fixed displayed
 rule. Session VWAP is descriptive context and is not part of the score. Zones and
 alerts use completed five-minute bars by default; charts offer 1/5/15-minute views.
-Zone status describes retests and closes beyond the far edge. Intraday OI is unavailable
+Potential zones require a completed five-minute close through a confirmed swing, a
+last opposite-colour candle, and displacement confirmed by a three-candle gap or a
+close at least one prior average candle range beyond the zone. Later closes through
+the far edge invalidate the zone; overlap is reported as a retest. These are
+mechanical annotations only. Intraday OI is unavailable
 and must not be invented or substituted with delayed daily OI. Mechanical zones,
 confirmed pivots, and equal-price references may be shown, but do not label them
 institutional orders or derive projected S1/R1/R2 advice. Keep the board isolated from

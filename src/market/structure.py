@@ -94,11 +94,11 @@ def market_structure(bars: Sequence[Bar], *, max_zones: int = 6) -> dict:
     """Find confirmed swing, equal-price and displacement zones.
 
     A candidate zone is the last opposite-colour candle in the three bars before a
-    completed displacement candle whose range is at least 1.5 prior ATRs and which
-    closes through the most recent confirmed swing or opening 15-minute range. The
-    zone is the full high-low of that opposite candle. Subsequent retests and closes
-    beyond its far edge are described mechanically; no institutional orders or
-    forecast are inferred.
+    completed five-minute candle that closes through a confirmed swing. The move
+    must also leave a three-candle gap or close at least one prior average candle
+    range beyond the zone. The zone is the full high-low of the opposite candle.
+    Subsequent retests and closes beyond its far edge are described mechanically;
+    no institutional orders or forecast are inferred.
     """
     if len(bars) < 7:
         return {"state": "INSUFFICIENT_BARS", "swing_highs": [], "swing_lows": [],
@@ -111,13 +111,6 @@ def market_structure(bars: Sequence[Bar], *, max_zones: int = 6) -> dict:
     zones = []
     high_cursor = low_cursor = 0
     last_high = last_low = None
-    opening_high = opening_low = None
-    if (len(bars) >= 4 and
-            bars[0].ts.timetz().replace(tzinfo=None) == SESSION_OPEN and
-            bars[1].ts - bars[0].ts == 5 * BAR_INTERVAL and
-            bars[2].ts - bars[1].ts == 5 * BAR_INTERVAL):
-        opening_high = max(b.high for b in bars[:3])
-        opening_low = min(b.low for b in bars[:3])
     for i in range(3, len(bars)):
         # A pivot centered at i-3 is the newest one whose two right-hand bars
         # existed before candidate candle i. Use the globally computed pivot list
@@ -129,23 +122,15 @@ def market_structure(bars: Sequence[Bar], *, max_zones: int = 6) -> dict:
         while low_cursor < len(lows) and lows[low_cursor][0] <= confirmed_through:
             last_low = lows[low_cursor][1]
             low_cursor += 1
-        prior_atr = _atr(bars, i)
-        if prior_atr is None or prior_atr <= 0:
-            continue
         candle = bars[i]
-        move = candle.high - candle.low
-        if move < 1.5 * prior_atr:
-            continue
         # The cursor includes only pivots whose right wing completed before i, so
         # future bars cannot retrospectively validate an earlier breakout.
         swing_break_up = last_high is not None and candle.close > last_high
         swing_break_down = last_low is not None and candle.close < last_low
-        opening_break_up = opening_high is not None and candle.close > opening_high
-        opening_break_down = opening_low is not None and candle.close < opening_low
         direction = ("BULLISH" if candle.close > candle.open and
-                     (swing_break_up or opening_break_up) else
+                     swing_break_up else
                      "BEARISH" if candle.close < candle.open and
-                     (swing_break_down or opening_break_down) else None)
+                     swing_break_down else None)
         if direction is None:
             continue
         opposite = next((j for j in range(i - 1, max(-1, i - 4), -1)
@@ -154,15 +139,24 @@ def market_structure(bars: Sequence[Bar], *, max_zones: int = 6) -> dict:
         if opposite is None:
             continue
         block = bars[opposite]
+        prior_ranges = [b.high - b.low for b in bars[max(0, i - 20):i]]
+        average_range = fmean(prior_ranges) if prior_ranges else 0.0
+        gap_confirmed = (candle.low > bars[i - 2].high if direction == "BULLISH"
+                         else candle.high < bars[i - 2].low)
+        close_distance = (candle.close - block.high if direction == "BULLISH"
+                          else block.low - candle.close)
+        close_beyond_zone = average_range > 0 and close_distance >= average_range
+        if not gap_confirmed and not close_beyond_zone:
+            continue
         prior_volumes = [b.volume for b in bars[max(0, opposite - 20):opposite]]
         mean_prior_volume = fmean(prior_volumes) if prior_volumes else 0
         zones.append({"direction": direction, "low": block.low, "high": block.high,
                       "formed_at": block.ts.isoformat(),
                       "confirmed_at": candle.close_time.isoformat(),
-                      "displacement_atr": round(move / prior_atr, 2),
-                      "break_reference": "CONFIRMED_SWING" if
-                          (swing_break_up if direction == "BULLISH" else swing_break_down)
-                          else "OPENING_RANGE",
+                      "break_reference": "CONFIRMED_SWING_CLOSE",
+                      "gap_confirmed": gap_confirmed,
+                      "close_beyond_zone_avg_range": close_beyond_zone,
+                      "average_candle_range": round(average_range, 4) if average_range else None,
                       "volume_at_zone": block.volume,
                       "volume_ratio_at_zone": round(block.volume / mean_prior_volume, 2)
                           if mean_prior_volume > 0 else None,
@@ -213,9 +207,11 @@ def market_structure(bars: Sequence[Bar], *, max_zones: int = 6) -> dict:
         "equal_highs": equal_highs,
         "equal_lows": equal_lows,
         "order_blocks": zones[-max_zones:],
-        "rules": {"pivot_wing_bars": 2, "opening_range_bars": 3,
+        "rules": {"pivot_wing_bars": 2,
                   "equal_level_tolerance": round(tolerance, 4),
-                  "displacement_min_atr": 1.5, "zone_source": "last opposite candle",
+                  "break_reference": "confirmed swing close",
+                  "displacement": "three-candle gap or close one prior average range beyond zone",
+                  "zone_source": "last opposite candle",
                   "zone_status": "subsequent candle overlap retests and close beyond far edge"},
     }
 

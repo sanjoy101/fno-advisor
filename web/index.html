@@ -1419,7 +1419,7 @@ function MarketChart({ symbol }) {
   });
   const vwapSeries = allVwap.slice(offset);
   const values = candles.flatMap((b) => [b.low, b.high]).concat(vwapSeries.filter((v) => v != null));
-  const structure = chart.structure || {};
+  const structure = interval === 5 ? (chart.structure || {}) : {};
   const latest = allCandles[allCandles.length - 1];
   const periodHigh = candles.length ? Math.max(...candles.map((b) => b.high)) : null;
   const periodLow = candles.length ? Math.min(...candles.map((b) => b.low)) : null;
@@ -1459,7 +1459,7 @@ function MarketChart({ symbol }) {
       </div>
       <div className="mt-2 text-xs text-purple-300">Dashed violet line: estimated session VWAP from typical candle price × volume.</div>
       <div className="mt-3 grid gap-3 sm:grid-cols-3 text-sm">
-        <div className="rounded-lg bg-slate-950/60 p-3"><div className="font-bold text-slate-200">Mechanical zones · {interval}-minute closes</div><div className="mt-1 text-slate-400">{zones.length ? zones.map((z) => `${z.direction} ${num(z.low)}–${num(z.high)} · ${z.status} · ${z.retests} retest(s)${z.volume_ratio_at_zone == null ? "" : ` · zone vol ${num(z.volume_ratio_at_zone)}×`}`).join(" · ") : "No pattern met the displayed mechanical rule."}</div></div>
+        <div className="rounded-lg bg-slate-950/60 p-3"><div className="font-bold text-slate-200">Mechanical zones · 5-minute closes</div><div className="mt-1 text-slate-400">{interval !== 5 ? "Switch to the 5-minute view to see zones and structure levels." : zones.length ? zones.map((z) => `${z.direction} ${num(z.low)}–${num(z.high)} · ${z.status} · ${z.retests} retest(s)${z.volume_ratio_at_zone == null ? "" : ` · zone vol ${num(z.volume_ratio_at_zone)}×`}`).join(" · ") : "No pattern met the displayed mechanical rule."}</div></div>
         <div className="rounded-lg bg-slate-950/60 p-3"><div className="font-bold text-slate-200">Swing highs · unbroken price references</div><div className="mt-1 text-slate-400">{levels.filter((l) => (structure.swing_highs || []).includes(l)).map((l) => num(l.price)).join(" · ") || "No confirmed pivots."}</div></div>
         <div className="rounded-lg bg-slate-950/60 p-3"><div className="font-bold text-slate-200">Swing lows · confirmed price references</div><div className="mt-1 text-slate-400">{(structure.swing_lows || []).slice(-5).map((l) => num(l.price)).join(" · ") || "No confirmed pivots."}</div></div>
       </div>

@@ -1025,6 +1025,8 @@ class SessionRuntime:
             bars_5m = self._market_5m_bars_for(symbol, bars, self.now())
             if not bars_5m:
                 continue
+            session_date = bars_5m[-1].ts.date()
+            bars_5m = [bar for bar in bars_5m if bar.ts.date() == session_date]
             last_time = bars_5m[-1].close_time
             if self._market_structure_last_bar.get(symbol) == last_time:
                 continue
@@ -1039,7 +1041,9 @@ class SessionRuntime:
                     candidates.append({"id": zone_key, "symbol": symbol, "kind": "POTENTIAL_ZONE",
                         "title": f"New mechanical {z['direction'].lower()} zone",
                         "at": z["confirmed_at"], "low": z["low"], "high": z["high"],
-                        "detail": f"Completed 5-minute displacement: {z['displacement_atr']} prior ATR; {z['break_reference'].lower()} break. This is a candle pattern, not evidence of institutional orders."})
+                        "detail": ("Completed 5-minute close through a confirmed swing; "
+                                   f"{'three-candle gap' if z['gap_confirmed'] else 'close beyond zone by at least one average candle range'}. "
+                                   "Mechanical candle pattern, not evidence of institutional orders.")})
                 elif previous_status and previous_status != z["status"]:
                     candidates.append({"id": f"{zone_key}|{z['status']}", "symbol": symbol,
                         "kind": "ZONE_STATUS", "title": f"Mechanical zone {z['status'].lower().replace('_', ' ')}",
@@ -1136,7 +1140,15 @@ class SessionRuntime:
         if symbol not in {s.upper() for s in self.symbols}:
             raise KeyError(symbol)
         now = self.now()
-        bars = resample_bars(self.feed.bars(symbol), interval, now)
+        source_bars = self.feed.bars(symbol)
+        bars = resample_bars(source_bars, interval, now)
+        if bars:
+            latest_date = bars[-1].ts.date()
+            bars = [bar for bar in bars if bar.ts.date() == latest_date]
+        structure_bars = resample_bars(source_bars, 5, now)
+        structure_session = ([bar for bar in structure_bars
+                              if bar.ts.date() == structure_bars[-1].ts.date()]
+                             if structure_bars else [])
         last = self.feed.last_tick_at(symbol)
         stale, age = feed_staleness(now, last, self.engine_cfg)
         return {
@@ -1147,9 +1159,7 @@ class SessionRuntime:
             "candles": [{"time": b.ts.isoformat(), "open": b.open, "high": b.high,
                          "low": b.low, "close": b.close, "volume": b.volume}
                         for b in bars],
-            "structure": market_structure(
-                [bar for bar in bars if bar.ts.date() == bars[-1].ts.date()] if bars else []
-            ),
+            "structure": market_structure(structure_session),
             "disclaimer": "Zones and swing levels are mechanical patterns from completed "
                           "candles. They do not confirm institutional orders or predict price.",
         }

@@ -85,9 +85,12 @@ The dashboard includes a transparent, descriptive intraday price/volume board (u
 sector participation and breadth map, a price-structure alert feed, and a decision
 journal with setup/habit tags, net results by tag, and a P&L calendar. Rankings use
 completed one-minute bars after skipping the first five opening bars when present;
-mechanical zones use completed five-minute bars by default and report retests and close
-invalidation. The board excludes OI because the intraday candle feed does not provide
-it. Its zones and pivots are price references, not verified institutional orders,
+mechanical zones use completed five-minute bars by default. A zone requires a close
+through a confirmed swing, the last opposite-colour candle, and displacement proven by
+a three-candle gap or a close at least one prior average candle range beyond the zone.
+The dashboard reports retests and close invalidation. The board excludes OI because
+the intraday candle feed does not provide it. Its zones and pivots are price
+references, not verified institutional orders,
 trade recommendations, or projected stop/target levels. VWAP is estimated from candle
 typical prices and volume.
 Run `python -m src.cli refresh-universe` to download, validate, and save the dated
