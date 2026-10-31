@@ -80,7 +80,14 @@ same line. Nothing it prints is an order instruction, and no order is placed.
 **Cost rates remain unverified**, so every feasibility figure is provisional and `READY`
 is unreachable until `COST_RATES_VERIFIED=true`. Not yet wired to the dashboard or API.
 
-Next: Journal (D). ML only past the gate in CLAUDE.md §2.1.
+The dashboard now includes a descriptive market view, completed-candle structure
+charts, NIFTY/BANKNIFTY context, and a decision journal linked to manual positions.
+Run `python -m src.cli refresh-universe` to download, validate, and save the dated
+FYERS NSE F&O symbol master. Default LIVE scans use that snapshot while it is no more
+than seven days old, otherwise they fall back to the maintained 21-name liquid subset
+plus the two indices. The UI reports its actual coverage. Net journal P&L is
+provisional until the cost model is reconciled against contract notes. ML remains
+behind the gate in CLAUDE.md §2.1.
 
 The live Fyers feed (`FyersLiveFeed`) has **50 tests**, all driving injected fakes. It
 seeds history before subscribing, backfills gaps after a reconnect, and reports
@@ -496,7 +503,7 @@ src/
     backfill.py    <- resumable 1-min backfill, validation, quarantine
   morning/         Module A -- Morning Setup  (planned)
   signals/         Module B -- Signal Engine. BUILT AND EVALUATED; carries no edge
-  journal/         Module D -- Journal  (planned)
+  journal/         Module D -- manual decisions + exit-advice snapshots (partial)
   api/
     runtime.py     <- SessionRuntime; REPLAY and LIVE differ only in now()
     app.py         <- FastAPI, binds 127.0.0.1. No signals endpoint, deliberately

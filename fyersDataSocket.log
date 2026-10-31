@@ -1,0 +1,4 @@
+{"level":"ERROR","location":"[<lambda>:1663] data_ws","message":"Connection to remote host was lost.","timestamp":"2026-08-24 18:27:34,887+0530","service":"FyersDataSocket"}
+{"level":"ERROR","location":"[<lambda>:1663] data_ws","message":"Connection to remote host was lost.","timestamp":"2026-08-24 20:54:57,307+0530","service":"FyersDataSocket"}
+{"level":"ERROR","location":"[<lambda>:1663] data_ws","message":"Connection to remote host was lost.","timestamp":"2026-08-25 14:01:26,140+0530","service":"FyersDataSocket"}
+{"level":"ERROR","location":"[<lambda>:1663] data_ws","message":"Connection to remote host was lost.","timestamp":"2026-08-27 14:35:35,367+0530","service":"FyersDataSocket"}

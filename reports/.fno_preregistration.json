@@ -1,0 +1,99 @@
+{
+  "experiment": "fno-features-1d-2026-08-23",
+  "written_before_any_pnl_was_computed": true,
+  "question": "Do F&O positioning features (open interest, OI-price divergence, futures basis, India VIX, rollover) produce a gross excess return over an equal-weight buy-and-hold comparator on DEV?",
+
+  "panel": {
+    "name": "swing-2020-2026",
+    "dev": "2020-01-01 .. 2024-12-31",
+    "holdout": "2025-01-01 onward — NOT TO BE TOUCHED under this pre-registration",
+    "universe": "LIQUID_FNO_UNIVERSE minus TMCV (no futures listed at all) and TMPV (futures begin 2025-10-24, entirely outside DEV)",
+    "warmup_sessions": 120,
+    "warmup_rationale": "MIN_VIX_HISTORY. Below it the VIX-percentile component is unavailable and the composite would be built from a different set of components than later in the panel."
+  },
+
+  "horizon": {
+    "trading_days": 1,
+    "rationale": "The features are daily by construction — OI, VIX and the futures basis all come from end-of-day files, and no intraday version of any of them exists in this data. One trading day is the shortest horizon at which the inputs can refresh at all. It is also the only swing horizon that was adequately powered in the prior experiment (n_eff 898 vs 300 and 180), because a 1-day hold has no window overlap.",
+    "single_horizon": "One horizon only. No second horizon is to be tested under this pre-registration."
+  },
+
+  "decision_procedure": {
+    "decision_points_per_session": 1,
+    "decision_time": "15:15 IST on session D",
+    "candidates_taken": "the single highest-scoring eligible symbol, or none",
+    "no_fallthrough": "If the top-scoring symbol is rejected by a downstream gate the session is NO_SIGNAL. It does NOT fall through to the second best — walking the ranking is how one draw silently becomes several.",
+    "tie_break": "symbol name, ascending"
+  },
+
+  "score_bar": {
+    "primary": 0.25,
+    "scale": "[-1, +1] weight-normalised composite over available components",
+    "rationale": "Absolute, fixed from the SCALE rather than read off the data: the composite runs [-1, +1] with 0 meaning the weighted evidence is balanced, and +0.25 requires the evidence to be a quarter of the way from balanced to unanimous. Not a percentile of an observed distribution.",
+    "secondary_arm": {
+      "bar": null,
+      "purpose": "POWER REFERENCE ONLY. Takes the day's top candidate every session regardless of score, maximising n so that a null result cannot hide behind low power. Declared here in advance and reported whatever it shows; it is not an alternative threshold to be selected between."
+    }
+  },
+
+  "risk": {
+    "stop": "p75 of the adverse excursion suffered by stop-less holds that were PROFITABLE AT THE HORIZON, measured in daily ATRs, calibrated on DEV at this horizon. Not reused from any prior calibration.",
+    "target": "stop x 1.5, preserving the declared reward-to-risk",
+    "gap_handling": "a session opening beyond the stop fills at the OPEN, not the stop",
+    "notional": 100000.0,
+    "costs": "delivery (CNC) round trip — the position is held overnight"
+  },
+
+  "comparator": {
+    "what": "equal-weight buy-and-hold of the whole panel over the SAME entry and exit dates",
+    "why": "Without it beta masquerades as edge. The prior swing experiment produced gross returns positive at every horizon, all of which vanished against this comparator."
+  },
+
+  "statistics": {
+    "unit": "non-overlapping entry-date blocks, not the trade count",
+    "effective_n": "distinct entry dates / horizon",
+    "interval": "95% CI on the block means",
+    "mde": "reported alongside; a measured effect below its own MDE is not a small effect, it is not a measurement"
+  },
+
+  "decision_rule": {
+    "stated": "If gross excess return over the equal-weight buy-and-hold comparator does not clear zero on DEV, F&O features carry no edge either, and the conclusion is that this approach is exhausted.",
+    "on_failure": "Report that plainly. No sweeps, no additional horizons, no search for a subset that works, no holdout evaluation.",
+    "clears_zero_means": "the lower bound of the 95% CI on the effective sample is strictly greater than zero"
+  },
+
+  "scoring_constants": {
+    "note": "Fixed here before any P&L was computed. tests/test_fno_features.py::test_scoring_saturation_constants_are_the_pre_registered_values pins them, so a later change fails the suite and has to be argued for.",
+    "weights": {
+      "oi_price_state_1d": 3.0,
+      "oi_buildup_5d": 2.0,
+      "oi_buildup_15d": 1.0,
+      "oi_buildup_30d": 1.0,
+      "basis_carry": 2.0,
+      "basis_roc": 2.0,
+      "vix_percentile": 1.5,
+      "vix_change": 1.0,
+      "rollover_relative": 1.0
+    },
+    "oi_state_score": {
+      "LONG_BUILDUP": 1.0,
+      "SHORT_COVERING": 0.3,
+      "LONG_UNWINDING": -0.3,
+      "SHORT_BUILDUP": -1.0
+    },
+    "oi_saturation_pct": {"5": 10.0, "15": 20.0, "30": 30.0},
+    "carry_centre_pct": 6.0,
+    "carry_span_pct": 6.0,
+    "basis_roc_saturation_pp": 0.20,
+    "vix_change_saturation_pct": 10.0,
+    "rollover_saturation": 0.10
+  },
+
+  "causality_requirements": {
+    "boundary": "strictly trade_date < decision date, for every F&O feature — the bhavcopy and the index-close file for session D both publish after the close of D",
+    "harness": "assert_session_causal on every public feature and on the assembled composite, plus two deliberately leaky controls the check must reject",
+    "roll": "near-month OI change and basis rate-of-change are None across a contract roll, never zero",
+    "corporate_action": "every OI change is None across a split/bonus ex-date, because NSE restates lot size and OI jumps by the action's factor",
+    "price_scale": "raw bhavcopy futures are divided by a snapped corporate-action factor before being differenced against adjusted spot; a session whose scale cannot be resolved is dropped, not guessed"
+  }
+}

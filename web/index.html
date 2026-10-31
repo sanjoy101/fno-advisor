@@ -1,0 +1,1673 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>fno-advisor — Module C</title>
+<!--
+  VENDORED LOCALLY, ON PURPOSE. These were CDN URLs and it cost a blank dashboard.
+
+  `https://unpkg.com/@babel/standalone/babel.min.js` was unpinned. unpkg started
+  serving Babel 8, whose preset-react defaults to runtime:"automatic", so JSX began
+  compiling to `import { jsx as _jsx } from "react/jsx-runtime"`. An ES import inside
+  a classic <script> is a parse error, the whole app script never ran, #root stayed
+  empty, and the page rendered as flat black. No line of our code had changed.
+
+  A local, single-user tool has no business depending on the public internet to
+  render. These files are committed; the page now issues ZERO external requests, and
+  test_web_page_makes_no_external_requests() fails the suite if that regresses.
+-->
+<script src="/vendor/react.production.min.js"></script>
+<script src="/vendor/react-dom.production.min.js"></script>
+<script src="/vendor/babel.min.js"></script>
+<script src="/vendor/tailwind.js"></script>
+<style>
+  html, body, #root { height: 100%; }
+  /* Read from a second monitor at arm's length. 17px base, generous leading. */
+  html { font-size: 17px; }
+  body { background: #0b0f14; line-height: 1.6; }
+  /* STALE_DATA and FORCE_EXIT must be impossible to miss on a second monitor. */
+  @keyframes pulseRing { 0%,100% { opacity: 1 } 50% { opacity: .45 } }
+  .alarm { animation: pulseRing 1.1s ease-in-out infinite; }
+  .tabnum { font-variant-numeric: tabular-nums; }
+  /* The "Why?" disclosures are <details>. Kill the native triangle; the button
+     styling carries the affordance. */
+  summary { list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  summary::marker { content: ""; }
+  /* A quieter trading-terminal frame around the existing, safety-first desk. */
+  body { background: #070b12; color: #e8eef7; }
+  .desk-grid { background-image: linear-gradient(rgba(148,163,184,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,.025) 1px, transparent 1px); background-size: 36px 36px; }
+  .desk-nav a { color: #93a4ba; transition: color .15s ease, background .15s ease; }
+  .desk-nav a:hover, .desk-nav a:focus-visible { color: #e8eef7; background: rgba(148,163,184,.1); outline: none; }
+  .desk-card { background: linear-gradient(145deg, rgba(17,26,40,.96), rgba(11,17,28,.96)); border-color: rgba(100,116,139,.28); box-shadow: 0 12px 32px rgba(0,0,0,.16); }
+  @media (max-width: 720px) { .desk-nav { width: 100%; overflow-x: auto; } }
+</style>
+</head>
+<body class="text-slate-100">
+<div id="root"></div>
+<noscript class="block p-8 text-lg">This dashboard requires JavaScript.</noscript>
+
+<script>
+/* Pin the CLASSIC JSX runtime explicitly rather than relying on a preset default.
+   Babel 8 changed that default to "automatic", which emits an ES `import` that a
+   classic <script> cannot parse -- the whole app dies silently and the page goes
+   black. Naming the runtime means a future Babel swap cannot bring that back. */
+Babel.registerPreset("react-classic", {
+  presets: [[Babel.availablePresets["react"], { runtime: "classic" }]],
+});
+
+/* If anything above failed to load or the transform throws, say so ON THE PAGE.
+   A blank screen is the one outcome this dashboard must never produce: at 14:50
+   holding a position, "no information" is indistinguishable from "nothing wrong". */
+window.addEventListener("error", (e) => {
+  const root = document.getElementById("root");
+  if (root && !root.childElementCount) {
+    root.innerHTML =
+      '<div style="padding:2rem;font:16px/1.6 system-ui;color:#fecaca;background:#450a0a;' +
+      'height:100%"><h1 style="font-size:1.5rem;font-weight:700;margin-bottom:.75rem">' +
+      'DASHBOARD FAILED TO RENDER</h1><p>The page loaded but the app did not start, so ' +
+      'nothing here is telling you about your positions.</p><pre style="margin-top:1rem;' +
+      'white-space:pre-wrap;color:#fca5a5">' + String(e.message || e.error) + '</pre>' +
+      '<p style="margin-top:1rem">Use <code>python -m src.cli watch</code> until this ' +
+      'is fixed.</p></div>';
+  }
+});
+</script>
+
+<script type="text/babel" data-presets="react-classic">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ---------------------------------------------------------------- helpers */
+
+const num = (v, d = 2) => (v === null || v === undefined || v === "" ? "—"
+  : Number(v).toLocaleString("en-IN", { minimumFractionDigits: d, maximumFractionDigits: d }));
+
+const signed = (v, d = 2) => {
+  if (v === null || v === undefined || v === "") return "—";
+  const n = Number(v);
+  return (n >= 0 ? "+" : "") + n.toLocaleString("en-IN",
+    { minimumFractionDigits: d, maximumFractionDigits: d });
+};
+
+const hhmmss = (iso) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return d.toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" });
+};
+
+const age = (secs) => {
+  if (secs === null || secs === undefined) return "no data";
+  if (secs < 60) return `${Math.round(secs)}s ago`;
+  const m = Math.floor(secs / 60);
+  if (m < 60) return `${m}m ${Math.round(secs % 60)}s ago`;
+  return `${Math.floor(m / 60)}h ${m % 60}m ago`;
+};
+
+const countdown = (secs) => {
+  if (secs === null || secs === undefined) return "—";
+  if (secs <= 0) return "EXPIRED";
+  const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
+  return `${h}h ${String(m).padStart(2, "0")}m`;
+};
+
+/* The engine's problem strings are "<fact> -- <why it matters>". The fact half is
+   specific to this symbol and this minute; the explanation half is identical boilerplate
+   on every card that fires the same predicate. Leading with the fact and putting the
+   rest behind "Why?" is a layout change, not a change to what is claimed -- both halves
+   remain on screen, in full, one click away. */
+const leadOf = (problem) => String(problem || "").split(" -- ")[0].trim();
+
+/* State styling. Severity drives size and colour, not decoration. */
+const STATE_STYLE = {
+  STALE_DATA:    { ring: "ring-fuchsia-400", bg: "bg-fuchsia-950/70", chip: "bg-fuchsia-500 text-black", label: "STALE DATA" },
+  FORCE_EXIT:    { ring: "ring-red-500",     bg: "bg-red-950/80",     chip: "bg-red-500 text-black",     label: "FORCE EXIT" },
+  EXIT_NOW:      { ring: "ring-orange-500",  bg: "bg-orange-950/60",  chip: "bg-orange-400 text-black",  label: "EXIT NOW" },
+  INVALID_ENTRY: { ring: "ring-amber-400",   bg: "bg-amber-950/50",   chip: "bg-amber-300 text-black",   label: "INVALID ENTRY" },
+  TIME_EXIT:     { ring: "ring-yellow-500",  bg: "bg-yellow-950/50",  chip: "bg-yellow-300 text-black",  label: "TIME EXIT" },
+  PARTIAL_EXIT:  { ring: "ring-cyan-400",    bg: "bg-cyan-950/50",    chip: "bg-cyan-300 text-black",    label: "PARTIAL EXIT" },
+  TRAIL:         { ring: "ring-emerald-500", bg: "bg-emerald-950/40", chip: "bg-emerald-400 text-black", label: "TRAIL" },
+  /* Evaluation itself failed for this position. Loud, because a position with no
+     advice is a position you are holding blind, not a quiet one. */
+  ERROR:         { ring: "ring-red-500",     bg: "bg-red-950/80",     chip: "bg-red-600 text-white",     label: "ERROR" },
+  HOLD:          { ring: "ring-slate-600",   bg: "bg-slate-900/60",   chip: "bg-slate-500 text-black",   label: "HOLD" },
+};
+const styleFor = (s) => STATE_STYLE[s] || STATE_STYLE.HOLD;
+const LOUD = new Set(["STALE_DATA", "FORCE_EXIT"]);
+
+/* ------------------------------------------------------------- disclosure */
+
+/* Standing explanations live here: what a panel does NOT do, what a verdict does NOT
+   mean, why a source is UNKNOWN. Every word of that is load-bearing and none of it
+   changes minute to minute, so it was permanently occupying screen space that the
+   changing numbers needed.
+
+   COLLAPSED IS NOT DELETED. The caveats are unchanged, one click away, and the render
+   tests open these and assert the text -- reachability, not visibility, is the
+   property that matters. Native <details> keeps them in the document, keyboard
+   reachable, and findable by the browser's own find-in-page when open. */
+function Why({ id, label = "Why?", children }) {
+  return (
+    <details data-testid={id} className="mt-3">
+      <summary data-testid={`${id}-toggle`}
+               className="cursor-pointer select-none inline-flex items-center gap-2
+                          rounded px-3 py-1.5 text-[15px] font-semibold
+                          bg-slate-800 text-slate-300 ring-1 ring-slate-600
+                          hover:bg-slate-700 hover:text-slate-100
+                          focus:outline-none focus:ring-2 focus:ring-sky-400">
+        <span aria-hidden="true" className="font-black text-slate-400">?</span>
+        {label}
+      </summary>
+      <div className="mt-3 space-y-3 text-[15px] leading-relaxed text-slate-300
+                      border-l-2 border-slate-700 pl-4">
+        {children}
+      </div>
+    </details>
+  );
+}
+
+/* ---------------------------------------------------------------- header */
+
+function Header({ health, connected }) {
+  const h = health || {};
+  const feed = h.feed || {};
+  /* THREE states, not two. With no health payload the mode is UNKNOWN -- never LIVE.
+     `h.mode === "REPLAY"` alone made every data-less render claim "● LIVE", so a page
+     that had failed to load anything looked exactly like a healthy live session. The
+     unknown case must look wrong, because it is. */
+  const mode = h.mode === "REPLAY" ? "REPLAY" : h.mode === "LIVE" ? "LIVE" : "UNKNOWN";
+  const stale = feed.stale;
+  const token = h.token || {};
+  const modeStyle = {
+    REPLAY:  "bg-violet-400 text-black",
+    LIVE:    "bg-emerald-500 text-black",
+    UNKNOWN: "bg-slate-600 text-white alarm",
+  }[mode];
+  const modeLabel = {
+    REPLAY:  "▶ REPLAY — NOT LIVE",
+    LIVE:    "● LIVE",
+    UNKNOWN: "◌ NO DATA — MODE UNKNOWN",
+  }[mode];
+
+  /* The two things that break this tool SILENTLY: an expired token stops the feed
+     without an error on screen, and a quiet socket looks exactly like a quiet market.
+     They get their own outlined group at a size the rest of the header does not use.
+     Deliberately NOT animated -- motion on this page means STALE_DATA or FORCE_EXIT
+     and nothing else, and diluting that is how the alarm stops meaning anything. */
+  const feedBad = mode === "LIVE" && (stale || feed.connected === false);
+  const tokenNA = token.applicable === false;
+  const tokenBad = !tokenNA && !token.valid;
+  const tokenWarn = !tokenNA && token.valid && token.seconds_remaining < 3600;
+  /* The server decides whether advice is permitted; the page only renders that
+     decision. Reading `advice_suppressed` rather than re-deriving it from the token
+     fields means the banner cannot disagree with what the cards actually did. */
+  const suppressed = !!(h.feed_health && h.feed_health.advice_suppressed);
+
+  const eventState = (h.event_risk_state) || (er_state_of(h)) || "UNKNOWN";
+
+  return (
+    <header data-testid="ops-header"
+            className={`sticky top-0 z-30 border-b-4 ${mode === "REPLAY"
+      ? "border-violet-400 bg-violet-950"
+      : mode === "LIVE" ? "border-emerald-500 bg-slate-950"
+      : "border-slate-500 bg-slate-900"}`}>
+      <div className="px-4 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-2.5">
+        <a href="#top" className="flex items-center gap-2.5 pr-3 no-underline text-slate-100">
+          <span className="grid place-items-center w-9 h-9 rounded-lg bg-sky-400 text-slate-950 font-black">F</span>
+          <span className="leading-tight"><span className="block text-sm font-black tracking-wide">FNO DESK</span><span className="block text-[10px] uppercase tracking-[.18em] text-slate-400">Position intelligence</span></span>
+        </a>
+        <nav className="desk-nav flex items-center gap-1 text-sm font-semibold" aria-label="Dashboard sections">
+          <a href="#overview" className="rounded-md px-3 py-2">Overview</a>
+          <a href="#scanner" className="rounded-md px-3 py-2">Scanner</a>
+          <a href="#scanner" className="rounded-md px-3 py-2">Structure</a>
+          <a href="#positions" className="rounded-md px-3 py-2">Positions</a>
+          <a href="#journal" className="rounded-md px-3 py-2">Journal</a>
+          <a href="#checks" className="rounded-md px-3 py-2">Symbol checks</a>
+          <a href="#event-risk" className="rounded-md px-3 py-2">Event risk</a>
+        </nav>
+        <div data-testid="mode-banner"
+             className={`px-3.5 py-1.5 rounded font-black text-lg tracking-widest ${modeStyle}`}>
+          {modeLabel}
+        </div>
+
+        <div data-testid="silent-failure-group"
+             className="flex items-stretch gap-3 rounded-lg ring-2 ring-slate-600
+                        bg-black/40 px-3 py-1.5">
+          <KeyStat
+            testid="feed-status"
+            label="feed"
+            value={feed.connected ? (stale ? "STALE" : "connected") : "DISCONNECTED"}
+            sub={`last tick ${age(feed.tick_age_seconds)}`}
+            tone={feedBad ? "bad" : feed.connected ? "good" : "warn"}
+          />
+          <div className="w-px bg-slate-600" />
+          <KeyStat
+            testid="token-status"
+            label="token expires in"
+            value={tokenNA ? "n/a (replay)"
+              : token.valid ? countdown(token.seconds_remaining) : "INVALID"}
+            sub={tokenNA ? "no token needed"
+              : tokenBad ? "run: python -m src.cli auth"
+              : tokenWarn ? "refresh before the next session" : "valid"}
+            tone={tokenNA ? "muted" : tokenBad ? "bad" : tokenWarn ? "warn" : "good"}
+          />
+        </div>
+
+        <Stat label="session" value={h.session_state || "—"} testid="session" />
+        <Stat label="clock" value={hhmmss(h.now)} mono />
+        <Stat label="event risk" value={eventState} />
+        {feed.reconnects > 0 && <Stat label="reconnects" value={feed.reconnects} tone="warn" />}
+        <Stat label="socket" value={connected ? "streaming" : "reconnecting…"}
+              tone={connected ? "good" : "warn"} />
+        {h.replay && (
+          <Stat label="replay speed" value={`${h.replay.speed}×${h.replay.finished ? " · ENDED" : ""}`} />
+        )}
+      </div>
+
+      {mode === "REPLAY" && (
+        <div className="px-4 pb-2 text-violet-200 text-[15px] font-semibold">
+          Replaying stored bars for {h.trade_date}. Prices, states and P&amp;L below are
+          historical — nothing here reflects the current market.
+        </div>
+      )}
+      {mode === "UNKNOWN" && (
+        <div className="alarm bg-slate-600 text-white font-bold px-4 py-2 text-lg">
+          No health payload received. This page does not know whether it is showing
+          live data, replayed data, or nothing at all. Do not act on anything below it.
+        </div>
+      )}
+      {mode === "LIVE" && stale && (
+        <div className="alarm bg-fuchsia-600 text-black font-black text-xl px-4 py-3">
+          FEED STALE — last tick {age(feed.tick_age_seconds)}. Exit advice is suppressed.
+          Verify prices in your broker app before acting.
+        </div>
+      )}
+      {/* LOUD and STATIC. Motion on this page means STALE_DATA or FORCE_EXIT on a
+          position you are holding; an expired credential is not that, and animating it
+          would dilute the one signal that has to cut through. Distinct wording and
+          colour from FEED STALE on purpose -- a quiet socket and a lapsed token have
+          different causes and different fixes, and telling you to restart a feed that
+          is working would waste the minutes that matter. */}
+      {suppressed && (
+        <div data-testid="token-alert"
+             className="bg-red-700 text-white px-4 py-3 border-t-4 border-red-300">
+          <div className="font-black text-2xl tracking-wide">
+            ACCESS TOKEN INVALID — PRICE-BASED ADVICE IS SUPPRESSED
+          </div>
+          <div className="mt-1 text-lg leading-relaxed">
+            {h.feed_health.detail}
+          </div>
+          <div className="mt-1 text-base text-red-100">
+            Prices below are the last seen while authorised. They are NOT current — do
+            not act on them. Square-off at 15:15 is still reported: it is driven by the
+            clock and needs no price.
+          </div>
+        </div>
+      )}
+    </header>
+  );
+}
+
+/* Event-risk state read defensively: the header shows it whether or not the payload
+   has arrived, and "no payload" is UNKNOWN -- never CLEAR. */
+function er_state_of(h) {
+  return (h && h.event_risk && h.event_risk.data_state) || null;
+}
+
+/* ------------------------------------------------------------ health summary */
+
+/* Four compact readouts, above the positions. Each carries a WORD as well as a
+   colour: colour alone would leave the state invisible to anyone who cannot
+   distinguish these hues, and the tone here means severity, never investment
+   quality. Nothing in this row ranks anything. */
+function HealthRow({ health, positions }) {
+  const h = health || {};
+  const feed = h.feed || {};
+  const token = h.token || {};
+  const mode = h.mode === "REPLAY" ? "REPLAY" : h.mode === "LIVE" ? "LIVE" : "UNKNOWN";
+  const staleCards = positions.filter((p) => p.feed_stale || p.price_is_current === false);
+  const eventState = er_state_of(h) || "UNKNOWN";
+
+  const tokenNA = token.applicable === false;
+  const cards = [
+    {
+      id: "health-positions",
+      label: "open positions",
+      value: String(positions.length),
+      note: positions.length === 0 ? "nothing to advise on" : "tracked below",
+      tone: "neutral",
+    },
+    {
+      id: "health-feed",
+      label: "feed",
+      value: feed.connected === undefined ? "UNKNOWN"
+        : feed.connected ? (feed.stale ? "STALE" : "CONNECTED") : "DISCONNECTED",
+      note: positions.length
+        ? `last data ${age(feed.tick_age_seconds)} · ${staleCards.length} of `
+          + `${positions.length} on stale prices`
+        : `last data ${age(feed.tick_age_seconds)}`,
+      tone: feed.connected === undefined ? "warn"
+        : !feed.connected ? "danger" : feed.stale ? "danger" : "ok",
+    },
+    {
+      id: "health-token",
+      label: "token",
+      value: tokenNA ? "NOT REQUIRED" : token.valid ? "VALID" : "INVALID",
+      note: tokenNA ? "replay uses stored bars"
+        : token.valid ? `expires in ${countdown(token.seconds_remaining)}`
+        : "run: python -m src.cli auth",
+      tone: tokenNA ? "neutral" : token.valid ? "ok" : "danger",
+    },
+    {
+      id: "health-event-risk",
+      label: "event risk",
+      value: eventState,
+      // Deliberately NOT repeating the panel's caveat sentence here. The STATE is the
+      // honest signal; the explanation of why UNKNOWN differs from CLEAR belongs in
+      // one place, behind the panel's Why?, not duplicated across the board.
+      note: eventState === "FRESH" ? "checked recently"
+        : "not confirmed — see the event-risk panel",
+      tone: eventState === "FRESH" ? "ok" : "warn",
+    },
+  ];
+
+  const TONE = {
+    ok: "ring-emerald-700 bg-emerald-950/30 text-emerald-200",
+    warn: "ring-amber-700 bg-amber-950/30 text-amber-200",
+    danger: "ring-rose-600 bg-rose-950/40 text-rose-200",
+    neutral: "ring-slate-700 bg-slate-900/70 text-slate-200",
+  };
+
+  return (
+    <section aria-label="operational health"
+             className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      {cards.map((c) => (
+        <div key={c.id} data-testid={c.id}
+             className={`rounded-lg ring-1 px-4 py-3 ${TONE[c.tone]}`}>
+          <div className="text-xs uppercase tracking-widest opacity-80">{c.label}</div>
+          <div className="text-2xl font-black tabnum leading-tight">{c.value}</div>
+          <div className="text-sm opacity-80 leading-snug">{c.note}</div>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+/* Bigger than Stat, and outlined. Reserved for the two silent-failure readouts. */
+function KeyStat({ label, value, sub, tone, testid }) {
+  const toneCls = tone === "bad" ? "text-rose-300" : tone === "warn" ? "text-amber-300"
+    : tone === "good" ? "text-emerald-300" : "text-slate-300";
+  return (
+    <div data-testid={testid} className="leading-tight min-w-[9rem]">
+      <div className="text-xs uppercase tracking-widest text-slate-400 font-semibold">{label}</div>
+      <div className={`text-2xl font-black tabnum ${toneCls}`}>{value}</div>
+      <div className="text-xs text-slate-400 tabnum">{sub}</div>
+    </div>
+  );
+}
+
+function Stat({ label, value, tone, mono, testid }) {
+  const toneCls = tone === "bad" ? "text-rose-300" : tone === "warn" ? "text-amber-300"
+    : tone === "good" ? "text-emerald-300" : "text-slate-100";
+  return (
+    <div className="leading-tight" data-testid={testid}>
+      <div className="text-xs uppercase tracking-wider text-slate-400">{label}</div>
+      <div className={`text-lg font-bold ${toneCls} ${mono ? "tabnum" : ""}`}>{value}</div>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- card */
+
+/* ELEVATED_EVENT_RISK is an EXCLUSION FILTER, not a signal.
+
+   Three states and no ordering between them. UNKNOWN gets its own loud colour rather
+   than looking like CLEAR: "we have not looked" and "we looked and there was nothing"
+   are different facts, and rendering the first as the second is how a filter silently
+   stops filtering. Same lesson as the header rendering LIVE when it had no data.
+
+   Deliberately NOT using the `alarm` class. Motion on this page means exactly one
+   thing -- STALE_DATA and FORCE_EXIT -- and an event flag is not an emergency. */
+const EVENT_RISK_STYLE = {
+  ELEVATED_EVENT_RISK: "bg-orange-400 text-black",
+  CLEAR:               "bg-slate-700 text-slate-300",
+  UNKNOWN:             "bg-fuchsia-800 text-white",
+};
+
+function riskOf(er) {
+  return (er && er.risk) || "UNKNOWN";
+}
+
+function EventRiskBadge({ er }) {
+  const risk = riskOf(er);
+  const label = risk === "ELEVATED_EVENT_RISK" ? "ELEVATED" : risk;
+  return (
+    <span data-testid="event-risk-badge" data-risk={risk}
+          className={`px-2 py-0.5 rounded text-xs font-black
+                      ${EVENT_RISK_STYLE[risk] || EVENT_RISK_STYLE.UNKNOWN}`}>
+      {label}
+    </span>
+  );
+}
+
+function EventRiskNote({ er }) {
+  const risk = riskOf(er);
+  if (risk === "CLEAR") return null;
+  const elevated = risk === "ELEVATED_EVENT_RISK";
+  return (
+    <div data-testid="event-risk-note"
+         className={`mt-3 rounded px-3 py-2 text-[15px] leading-relaxed ${elevated
+           ? "bg-orange-400/20 ring-1 ring-orange-400 text-orange-100"
+           : "bg-fuchsia-900/40 ring-1 ring-fuchsia-600 text-fuchsia-100"}`}>
+      <span className="font-black">
+        {elevated ? "ELEVATED EVENT RISK" : "EVENT RISK UNKNOWN"}
+      </span>
+      {er && er.categories && er.categories.length > 0 && (
+        <span className="ml-2 font-bold">{er.categories.join(" · ")}</span>
+      )}
+      <div className="mt-1">{er ? er.reason : "No event-risk information."}</div>
+      {elevated && (
+        <div className="mt-1 text-orange-200/90">
+          Normal technical reasoning does not apply here — price is being driven by
+          information rather than flow. This says nothing about direction.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EventRiskPanel({ er }) {
+  const state = (er && er.data_state) || "UNAVAILABLE";
+  const elevated = (er && er.elevated) || [];
+  const fresh = state === "FRESH";
+  return (
+    <Panel title="Event risk">
+      <div data-testid="event-risk-state"
+           className={`px-3 py-1.5 rounded text-sm font-black inline-block ${fresh
+             ? "bg-slate-700 text-slate-200" : "bg-fuchsia-800 text-white"}`}>
+        {state}
+        {er && er.poll_age_seconds !== null && er.poll_age_seconds !== undefined
+          && ` · last checked ${age(er.poll_age_seconds)}`}
+      </div>
+
+      {!fresh && (
+        <div data-testid="event-risk-unavailable"
+             className="mt-3 rounded bg-fuchsia-900/40 ring-1 ring-fuchsia-600
+                        text-fuchsia-100 px-3 py-2 text-[15px] leading-relaxed">
+          {er ? er.reason : "No event-risk payload has been received."}
+        </div>
+      )}
+
+      {fresh && (
+        <div className="mt-3">
+          {elevated.length === 0 ? (
+            <div data-testid="event-risk-none" className="text-[15px] text-slate-400">
+              No symbol is under elevated event risk right now.
+            </div>
+          ) : (
+            <ul data-testid="event-risk-list" className="space-y-3">
+              {er.symbols.filter((s) => s.event_risk === "ELEVATED_EVENT_RISK")
+                .map((s) => (
+                <li key={s.symbol} data-testid="event-risk-item"
+                    className="rounded bg-orange-400/15 ring-1 ring-orange-400/60 p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="font-black text-lg">{s.symbol}</span>
+                    <EventRiskBadge er={{ risk: s.event_risk }} />
+                  </div>
+                  <div className="mt-1 text-sm text-orange-100/90 leading-relaxed">
+                    {s.categories.join(" · ")}
+                  </div>
+                  {s.items && s.items.map((it, i) => (
+                    <div key={i} className="mt-1 text-sm text-slate-300 leading-relaxed">
+                      {it.kind === "SCHEDULED" ? "scheduled " + it.scheduled_for : "landed"}
+                      {" — "}{it.subject}
+                      {it.revised && <span className="text-fuchsia-300"> (source revised this)</span>}
+                    </div>
+                  ))}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
+      <Why id="why-event-risk" label="What this is and is not">
+        <p>
+          This is an <strong className="text-slate-100">exclusion filter, not a
+          ranking</strong>. It flags symbols where a material announcement landed or is
+          scheduled, so normal technical reasoning does not apply.
+        </p>
+        <p>
+          It says <strong className="text-slate-100">nothing about direction</strong>,
+          carries no rating of any kind, and no claim is made that acting on it
+          improves returns.
+        </p>
+        <p>
+          <strong className="text-slate-100">UNKNOWN is not CLEAR</strong> — it means we
+          do not know. A failed poll, a poll older than 30 minutes, or a replayed
+          session all produce UNKNOWN, never CLEAR.
+        </p>
+        <p>
+          Forward-collected only. There is no historical announcements data and there
+          deliberately never will be — retroactively edited filings cannot reconstruct
+          what was knowable at the time, so a replay always reports UNKNOWN.
+        </p>
+      </Why>
+    </Panel>
+  );
+}
+
+function PositionCard({ p, onClose }) {
+  const st = styleFor(p.state);
+  const loud = LOUD.has(p.state);
+  /* `price_is_current === false` covers BOTH causes -- a stale socket and a suppressed
+     evaluation -- so a price can never render as current on either path. */
+  const stalePrice = p.pnl_is_stale || p.feed_stale || p.price_is_current === false;
+
+  /* A THIN LEFT ACCENT rather than a flooded card. Colour-washing every card made the
+     board harder to scan, not easier: when everything is coloured, nothing is. The
+     accent carries severity; the state CHIP carries the word, so the state is never
+     conveyed by colour alone. */
+  const accent = {
+    STALE_DATA: "border-l-fuchsia-400", FORCE_EXIT: "border-l-red-500",
+    EXIT_NOW: "border-l-orange-500", INVALID_ENTRY: "border-l-amber-400",
+    TIME_EXIT: "border-l-yellow-500", PARTIAL_EXIT: "border-l-cyan-400",
+    TRAIL: "border-l-emerald-500", ERROR: "border-l-red-500",
+  }[p.state] || "border-l-slate-600";
+
+  return (
+    <article data-testid="position-card"
+             className={`rounded-lg border-l-4 ${accent} ring-1 ring-slate-700
+                         desk-card ${loud ? "alarm" : ""} p-4`}>
+      {/* Title: symbol, quantity, entry, duration. */}
+      <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <div className="flex flex-wrap items-baseline gap-x-3">
+          <h3 className="text-2xl font-black tracking-tight">{p.symbol}</h3>
+          <span className="text-[15px] text-slate-300 tabnum">
+            {p.remaining_quantity}
+            {p.remaining_quantity !== p.quantity && <span className="text-slate-500"> / {p.quantity}</span>}
+            {" @ "}{num(p.entry_price)}
+          </span>
+          <span className="text-sm text-slate-400 tabnum">
+            entered {hhmmss(p.entry_time)} · held {num(p.minutes_held, 0)}m
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <EventRiskBadge er={p.event_risk} />
+          <span data-testid="state-chip"
+                className={`px-3 py-1 rounded font-black text-lg ${st.chip}`}>
+            {st.label}
+          </span>
+        </div>
+      </div>
+
+      {/* Fixed wording, on purpose: it says what to DO, not merely that a flag is set. */}
+      {stalePrice && (
+        <div data-testid="stale-warning" role="alert"
+             className="mt-3 rounded bg-fuchsia-950/70 ring-1 ring-fuchsia-400
+                        px-3 py-2 text-[15px] font-bold text-fuchsia-100">
+          Price data is stale. Exit guidance is suppressed. Verify in your broker app.
+        </div>
+      )}
+
+      {/* A state that is NOT current must never read as advice. The chip above still
+          shows the last authorised state, because "TRAIL as of 12:34" is the useful
+          fact -- but it is labelled here rather than left to imply it still holds. */}
+      {p.state_is_current === false && (
+        <div data-testid="state-not-current" role="alert"
+             className="mt-3 rounded bg-red-950/70 ring-1 ring-red-500 px-3 py-2
+                        text-[15px] font-bold text-red-100">
+          NOT CURRENT — {p.state} was the last state reached while authorised. No advice
+          is being computed for this position right now.
+        </div>
+      )}
+
+      {/* ABOVE THE FOLD: the numbers a glance needs, on one row.
+          Every price carries its age, and data-price/data-price-age make that
+          structural rather than conventional -- test_every_rendered_price_carries_its_age
+          fails on any priced element without a freshness attribute. */}
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_auto]">
+        <div className="flex flex-wrap gap-x-8 gap-y-2">
+          <Field label="last price" big mono
+                 price age={p.price_age_seconds}
+                 value={p.last_price === null ? "—" : num(p.last_price)}
+                 sub={<span className={stalePrice ? "text-fuchsia-300 font-bold" : "text-slate-400"}>
+                   {stalePrice ? "STALE · " : ""}{age(p.price_age_seconds)}
+                 </span>} />
+          <Field label="stop" mono value={p.stop ? num(p.stop) : "none"}
+                 sub={p.stop_moved
+                   ? <span className="text-emerald-300">moved from {num(p.initial_stop)}</span>
+                   : (p.breakeven_armed ? <span className="text-emerald-300">breakeven armed</span>
+                      : <span className="text-slate-500">unchanged</span>)} />
+        </div>
+
+        {/* Gross and net, one block, never one without the other, never behind a
+            toggle. `PnL` renders both or neither. */}
+        <div className="grid grid-cols-2 gap-2">
+          <PnL testid="pnl-gross" label="GROSS" amount={p.gross_pnl} pct={p.gross_pct}
+               stale={stalePrice} />
+          <PnL testid="pnl-net" label="NET (after costs)" amount={p.net_pnl}
+               pct={p.net_pct} stale={stalePrice}
+               note={p.costs ? `costs ${num(p.costs)}` : null} />
+        </div>
+
+        <div className="flex items-start">
+          <CloseControl position={p} onClose={onClose} />
+        </div>
+      </div>
+
+      {/* The advice line. */}
+      <div className="mt-3 rounded bg-black/40 px-3 py-2.5">
+        <div className="text-xs uppercase tracking-widest text-slate-400 mb-0.5">
+          {p.advice_suppressed ? "why there is no advice" : "advice"}
+        </div>
+        <div className="text-base leading-relaxed">{p.reason}</div>
+        {p.suggested_exit_quantity > 0 && (
+          <div className="mt-1.5 text-lg font-bold text-amber-200">
+            Suggested: exit {p.suggested_exit_quantity} — you do this yourself, manually,
+            in your broker app.
+          </div>
+        )}
+      </div>
+
+      {/* Annotation only. The advice above was computed without reference to this and
+          is not altered by it -- an event flag must never suppress a square-off. */}
+      <EventRiskNote er={p.event_risk} />
+
+      <Why id={`why-position-${p.position_id}`} label="Detail, indicators and costs">
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-1 tabnum text-slate-200">
+          <div><dt className="inline text-slate-400">T1 </dt>
+               <dd className="inline">{p.target1 ? num(p.target1) : "—"}</dd></div>
+          <div><dt className="inline text-slate-400">session high </dt>
+               <dd className="inline">{num(p.highest_price)}</dd></div>
+          <div><dt className="inline text-slate-400">costs so far </dt>
+               <dd className="inline">{p.costs ? num(p.costs) : "—"}</dd></div>
+          <div><dt className="inline text-slate-400">initial stop </dt>
+               <dd className="inline">{p.initial_stop ? num(p.initial_stop) : "none"}</dd></div>
+        </dl>
+        {p.indicators && (
+          <div className="tabnum text-slate-200">
+            VWAP {num(p.indicators.vwap)} · ATR {num(p.indicators.atr14)} ·
+            EMA9 {num(p.indicators.ema9)} / EMA21 {num(p.indicators.ema21)} ·
+            RSI {num(p.indicators.rsi14, 1)} · {p.indicators.bars_used} bars
+          </div>
+        )}
+        <p>
+          Indicators are computed from completed bars only — the bar still forming is
+          excluded, so these are the values a live screen would have shown at that
+          moment. Net P&amp;L is after both legs of modelled costs, including slippage.
+        </p>
+        {p.entry_verdict && (
+          <p className="text-amber-300/90">Entry note: {p.entry_verdict}</p>
+        )}
+      </Why>
+    </article>
+  );
+}
+
+/* `price` marks this as a money reading whose freshness must be visible; `age` is the
+   seconds behind. They become data-attributes so a test can prove no price renders
+   without one, rather than trusting each call site to remember. */
+function Field({ label, value, sub, big, mono, price, age: ageSeconds }) {
+  const attrs = price
+    ? { "data-price": "1", "data-price-age": String(ageSeconds ?? "") }
+    : {};
+  return (
+    <div {...attrs}>
+      <div className="text-xs uppercase tracking-wider text-slate-400">{label}</div>
+      <div className={`${big ? "text-3xl" : "text-xl"} font-bold ${mono ? "tabnum" : ""}`}>{value}</div>
+      {sub && <div className="text-sm">{sub}</div>}
+    </div>
+  );
+}
+
+function PnL({ label, amount, pct, note, stale, testid }) {
+  const n = amount === null || amount === undefined ? null : Number(amount);
+  const tone = n === null ? "text-slate-400" : n >= 0 ? "text-emerald-300" : "text-rose-300";
+  return (
+    <div data-testid={testid}
+         className={`rounded p-2.5 ${stale ? "bg-fuchsia-950/60 ring-1 ring-fuchsia-500" : "bg-black/30"}`}>
+      <div className="text-xs uppercase tracking-wider text-slate-400">{label}</div>
+      <div className={`text-3xl font-black tabnum ${tone}`}>{signed(amount)}</div>
+      <div className={`text-sm tabnum ${tone}`}>{signed(pct)}%</div>
+      {note && <div className="text-sm text-slate-400 tabnum">{note}</div>}
+      {stale && <div className="text-sm font-bold text-fuchsia-300">based on a stale price</div>}
+    </div>
+  );
+}
+
+/* "Record manual exit" -- never "Sell", never "Exit now", never "Close position".
+   This control writes a fill YOU already made in your broker app into the local
+   record. It reaches no broker and places nothing, and the label has to say so at a
+   glance: a red button reading "Sell 100" beside an EXIT_NOW chip is one muscle-memory
+   click away from looking like an order ticket.
+   Styled neutral for the same reason -- test_the_manual_exit_control_never_reads_as_an_order
+   pins the wording. */
+function CloseControl({ position, onClose }) {
+  const [open, setOpen] = useState(false);
+  const [price, setPrice] = useState("");
+  if (!open) {
+    return <button type="button" onClick={() => setOpen(true)} data-testid="record-exit"
+      className="px-3 py-2 rounded bg-slate-700 hover:bg-slate-600 text-sm font-semibold
+                 whitespace-nowrap focus:outline-none focus:ring-2 focus:ring-sky-400">
+      Record manual exit
+    </button>;
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <label className="sr-only" htmlFor={`fill-${position.position_id}`}>
+        actual fill price
+      </label>
+      <input autoFocus id={`fill-${position.position_id}`} value={price}
+        onChange={(e) => setPrice(e.target.value)}
+        placeholder="actual fill price"
+        className="w-36 px-3 py-2 rounded bg-slate-800 ring-1 ring-slate-600 text-sm
+                   tabnum focus:outline-none focus:ring-2 focus:ring-sky-400" />
+      <button type="button"
+        onClick={() => { onClose(position.position_id, price); setOpen(false); }}
+        className="px-3 py-2 rounded bg-sky-700 hover:bg-sky-600 text-sm font-bold
+                   focus:outline-none focus:ring-2 focus:ring-sky-300">
+        Save to record
+      </button>
+      <button type="button" onClick={() => setOpen(false)}
+        className="px-2 py-2 text-sm text-slate-400 hover:text-slate-200
+                   focus:outline-none focus:ring-2 focus:ring-sky-400">cancel</button>
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- forms */
+
+function AddPositionForm({ onAdded }) {
+  const [f, setF] = useState({ symbol: "", quantity: "", entry_price: "", stop_loss: "" });
+  const [msg, setMsg] = useState(null);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setMsg(null);
+    const body = {
+      symbol: f.symbol.trim().toUpperCase(),
+      quantity: parseInt(f.quantity, 10),
+      entry_price: f.entry_price,
+    };
+    if (f.stop_loss) body.stop_loss = f.stop_loss;
+    const res = await fetch("/positions", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) { setMsg({ bad: true, text: data.detail || "failed" }); return; }
+    setMsg({ bad: false, text: `Recorded ${data.symbol}. No order was placed.` });
+    setF({ symbol: "", quantity: "", entry_price: "", stop_loss: "" });
+    onAdded && onAdded();
+  };
+
+  return (
+    <Panel title="Record a fill">
+      <form onSubmit={submit} data-testid="add-position-form"
+            className="grid grid-cols-2 gap-3">
+        <Input label="symbol" value={f.symbol} onChange={set("symbol")} placeholder="RELIANCE" />
+        <Input label="quantity" value={f.quantity} onChange={set("quantity")} placeholder="100" />
+        <Input label="entry price" value={f.entry_price} onChange={set("entry_price")} placeholder="1234.50" />
+        <Input label="stop (optional)" value={f.stop_loss} onChange={set("stop_loss")} placeholder="1200" />
+        <button className="col-span-2 mt-1 py-2.5 rounded bg-sky-600 hover:bg-sky-500
+                           font-bold text-[15px] focus:outline-none focus:ring-2
+                           focus:ring-sky-300">
+          Record position
+        </button>
+      </form>
+      {msg && <div className={`mt-3 text-[15px] ${msg.bad ? "text-rose-300" : "text-emerald-300"}`}>{msg.text}</div>}
+      <Why id="why-add-position">
+        <p>
+          This records a fill you already made in your broker app. It never places an
+          order, and nothing in this system ever will.
+        </p>
+      </Why>
+    </Panel>
+  );
+}
+
+function CheckEntryPanel() {
+  const [f, setF] = useState({ symbol: "", price: "", stop: "" });
+  const [result, setResult] = useState(null);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+
+  const submit = async (e) => {
+    e.preventDefault();
+    const body = { symbol: f.symbol.trim().toUpperCase() };
+    if (f.price) body.price = f.price;
+    if (f.stop) body.stop = f.stop;
+    const res = await fetch("/check-entry", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setResult(await res.json());
+  };
+
+  return (
+    <Panel title="Check one symbol">
+      <form onSubmit={submit} data-testid="check-entry-form" className="grid grid-cols-3 gap-3">
+        <Input label="symbol" value={f.symbol} onChange={set("symbol")} placeholder="RELIANCE" />
+        <Input label="price (opt)" value={f.price} onChange={set("price")} placeholder="last close" />
+        <Input label="stop (opt)" value={f.stop} onChange={set("stop")} placeholder="1200" />
+        {/* "records nothing" was true until the check log existed and is not any
+            more. The claim that matters is unchanged and is the one made here: no
+            position, no order. The check itself IS logged, and saying so is the
+            difference between a caveat and a false statement. */}
+        <button className="col-span-3 mt-1 py-2.5 rounded bg-slate-600 hover:bg-slate-500
+                           font-bold text-[15px] focus:outline-none focus:ring-2
+                           focus:ring-sky-400">
+          Check — creates no position
+        </button>
+      </form>
+      {result && <EntryResultCard result={result} />}
+    </Panel>
+  );
+}
+
+/* Verdict first, ONE plain line of reason, everything else behind "Why?".
+
+   This card used to print the same VWAP sentence twice: once inside `summary` (which
+   concatenates every problem) and again in the bulleted `problems` list. Both are still
+   here in full -- the summary and the complete bullet list are inside the disclosure --
+   but the surface now leads with what was decided and the single fact behind it. */
+function EntryResultCard({ result }) {
+  const verdict = result.valid === true ? "SOUND"
+    : result.valid === false ? "UNSOUND"
+    : result.reason === "NOT_SUBSCRIBED" ? "NOT TRACKED"
+    : result.reason === "STALE_FEED" ? "NO VERDICT — FEED STALE"
+    : result.reason === "MARKET_CLOSED" ? "NO VERDICT — MARKET CLOSED"
+    : "NO BAR YET";
+
+  /* STALE_FEED gets the same fuchsia the STALE_DATA state uses everywhere else on
+     this page, so "the data is dead" looks the same wherever it appears. It is NOT
+     animated: motion is reserved for STALE_DATA and FORCE_EXIT on a position you are
+     actually holding, and a refused question is not an emergency. */
+  const headline = {
+    SOUND: "ring-emerald-500 bg-emerald-950/50",
+    UNSOUND: "ring-amber-400 bg-amber-950/50",
+    "NOT TRACKED": "ring-fuchsia-600 bg-fuchsia-950/40",
+    "NO VERDICT — FEED STALE": "ring-fuchsia-400 bg-fuchsia-950/60",
+    "NO VERDICT — MARKET CLOSED": "ring-slate-500 bg-slate-900",
+    "NO BAR YET": "ring-slate-600 bg-slate-900",
+  }[verdict];
+
+  const chip = {
+    SOUND: "bg-emerald-400 text-black",
+    UNSOUND: "bg-amber-300 text-black",
+    "NOT TRACKED": "bg-fuchsia-700 text-white",
+    "NO VERDICT — FEED STALE": "bg-fuchsia-500 text-black",
+    "NO VERDICT — MARKET CLOSED": "bg-slate-500 text-black",
+    "NO BAR YET": "bg-slate-600 text-white",
+  }[verdict];
+
+  const problems = result.problems || [];
+  /* One line. For an unsound entry that is the first problem's FACT half; the
+     explanatory half and any further problems are in the disclosure below. */
+  const lead = result.valid === false && problems.length
+    ? leadOf(problems[0])
+    : result.valid === true
+      ? "No entry condition was already violated."
+      : result.reason === "NOT_SUBSCRIBED"
+        ? `${result.symbol} is not in the tracked universe — waiting will not help.`
+        : result.reason === "STALE_FEED" || result.reason === "MARKET_CLOSED"
+          ? result.summary
+          : `First bar for ${result.symbol} has not closed yet.`;
+
+  return (
+    <div data-testid="entry-result" className={`mt-4 rounded ring-2 p-4 ${headline}`}>
+      <div className="flex flex-wrap items-center gap-3">
+        <span data-testid="entry-verdict"
+              className={`px-3 py-1.5 rounded font-black text-xl ${chip}`}>{verdict}</span>
+        <span className="font-bold text-lg">{result.symbol}</span>
+        <span className="text-sm text-slate-300">
+          {result.asof ? `as of ${hhmmss(result.asof)}` : ""}
+        </span>
+      </div>
+
+      <div data-testid="entry-lead" className="mt-3 text-lg leading-relaxed">{lead}</div>
+
+      {result.valid === false && problems.length > 1 && (
+        <div className="mt-1 text-[15px] text-amber-200/90">
+          and {problems.length - 1} more condition{problems.length > 2 ? "s" : ""} — see Why?
+        </div>
+      )}
+
+      <Why id="why-entry-result" label="Full detail and what this does not mean">
+        <p data-testid="entry-summary">{result.summary}</p>
+        {problems.length > 0 && (
+          <ul data-testid="entry-problems" className="space-y-2">
+            {problems.map((p, i) => <li key={i}>• {p}</li>)}
+          </ul>
+        )}
+        {result.unevaluated && result.unevaluated.length > 0 && (
+          <p className="text-slate-400">
+            Not checkable: {result.unevaluated.join(", ")}. An unavailable indicator is
+            never counted as passing.
+          </p>
+        )}
+        <p>
+          SOUND means only that no entry condition was <em>already</em> violated at the
+          last completed bar. It is <strong className="text-slate-100">not</strong> a
+          prediction that the price will rise. Measured on six years of DEV data, the
+          verdict does not separate forward 60-minute returns to any degree worth acting
+          on — see reports/entry_check_diagnostic.md.
+        </p>
+        <p>
+          No position was created and no order was placed. The check itself is logged
+          in "Checked today", with the price at the time, so you can see later what
+          happened after it.
+        </p>
+      </Why>
+    </div>
+  );
+}
+
+/* Bulk entry check.
+
+   A FILTER, NOT A RANKING. Rows arrive alphabetical and are rendered in the order
+   received -- no client-side sort, no score column, no highlighted "best" row. SOUND
+   and UNSOUND get the same visual weight as each other; neither is styled as a
+   recommendation. Module B's ranking failed evaluation at every horizon tested, and
+   this panel must not become that engine by the back door. See CLAUDE.md 2.3. */
+function CheckAllPanel({ prominent, onReady }) {
+  const [rows, setRows] = useState(null);
+  const [meta, setMeta] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const runAll = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/check-entry-all");
+      if (!res.ok) throw new Error(`server returned ${res.status}`);
+      const data = await res.json();
+      setRows(data.results);          // rendered as received; deliberately not sorted
+      setMeta(data);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /* Hand the SAME runAll to the empty state rather than letting it fetch for itself.
+     A second implementation would be a second set of ordering and no-ranking
+     guarantees to keep in step. */
+  useEffect(() => { onReady && onReady(runAll); }, [onReady]);
+
+  const verdict = (r) => r.valid === true ? "SOUND"
+    : r.valid === false ? "UNSOUND" : "NO DATA";
+  const verdictCls = (r) => r.valid === true ? "bg-slate-200 text-black"
+    : r.valid === false ? "bg-amber-300 text-black" : "bg-slate-600 text-white";
+
+  return (
+    <Panel title="Check every symbol">
+      {prominent && (
+        <p className="mb-3 text-[15px] text-slate-300 leading-relaxed">
+          Nothing is open, so this is the thing to do before buying: screen every
+          tracked symbol at once for entry conditions that are already violated.
+        </p>
+      )}
+      <button onClick={runAll} disabled={busy} data-testid="check-all-button"
+              className="w-full py-3 rounded bg-slate-600 hover:bg-slate-500 font-bold
+                         text-lg disabled:opacity-50 focus:outline-none focus:ring-2
+                         focus:ring-sky-400">
+        {busy ? "Checking…" : "Check all subscribed symbols — creates no position"}
+      </button>
+
+      {error && (
+        <div data-testid="check-all-error"
+             className="mt-3 rounded bg-red-800 text-white px-3 py-2 text-[15px] font-bold">
+          Could not run the check: {error}
+        </div>
+      )}
+
+      {rows && (
+        <div className="mt-4 overflow-x-auto">
+          <div className="text-sm text-slate-400 mb-2">
+            as of {meta && meta.asof ? hhmmss(meta.asof) : "—"} · {rows.length} symbols
+            · alphabetical
+          </div>
+          <table data-testid="check-all-table" className="w-full text-[15px]">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wider text-slate-400">
+                <th className="py-2 pr-4">symbol</th>
+                <th className="py-2 pr-4">verdict</th>
+                <th className="py-2 pr-4">event risk</th>
+                <th className="py-2">reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.symbol} data-testid="check-all-row"
+                    className="border-t border-slate-800 align-top">
+                  <td className="py-3 pr-4 font-bold tabnum">{r.symbol}</td>
+                  <td className="py-3 pr-4">
+                    <span className={`px-2 py-0.5 rounded text-xs font-black
+                                      ${verdictCls(r)}`}>
+                      {verdict(r)}
+                    </span>
+                  </td>
+                  {/* A disqualifier, never a preference. It sits in a CELL rather than
+                      on the <tr>, so every row keeps identical classes and no symbol is
+                      styled as the one to pick. */}
+                  <td className="py-3 pr-4">
+                    <EventRiskBadge er={r.event_risk} />
+                    {r.event_risk && r.event_risk.categories
+                      && r.event_risk.categories.length > 0 && (
+                      <div className="mt-1 text-xs text-orange-200 leading-tight">
+                        {r.event_risk.categories.join(" · ")}
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-3 text-slate-300 leading-relaxed">{r.summary}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="mt-3 text-sm text-slate-400">
+            No position was created. Each row is logged in "Checked today".
+          </div>
+        </div>
+      )}
+
+      <Why id="why-bulk-check" label="What these verdicts do and do not mean">
+        <p>
+          This is a <strong className="text-slate-100">filter, not a ranking</strong>.
+          SOUND means only that an entry is not obviously unsound right now — it is
+          <strong className="text-slate-100"> not</strong> a prediction that the price
+          will rise, and it does not say this symbol is better than any other.
+        </p>
+        <p>
+          Rows are listed alphabetically and in no other order. There is no score, no
+          rank and no preferred row. Nothing here tells you what to buy.
+        </p>
+        <p>
+          The event-risk column is a separate exclusion: ELEVATED means a material
+          announcement landed or is scheduled, so normal technical reasoning does not
+          apply — it is not a view on direction.
+        </p>
+      </Why>
+    </Panel>
+  );
+}
+
+/* The "checked today" scoreboard.
+
+   A RECORD OF THE PAST. It is the single most dangerous panel on this page, because a
+   table of symbols with a return column beside each one IS a buy list unless something
+   structural stops it being one -- and Module B's ranking failed evaluation at every
+   horizon tested (CLAUDE.md 2.3).
+
+   The guards, all structural rather than cultural:
+
+   - Rows are rendered in the order the server sent them: check time, newest first.
+     There is NO client-side sort, no clickable column header, and no sort control. A
+     `.sort(` here would satisfy every server-side test and still put a ranking on
+     screen, so a static test forbids one in this function.
+   - There is no sort-by-return, and there deliberately never will be. A descending
+     return column is a buy list whatever the header says.
+   - No verdict filter. SOUND and UNSOUND rows are always shown together; showing only
+     the SOUND ones would turn a scoreboard into a track record.
+   - No aggregate "top performers". The only aggregate is the SOUND-vs-UNSOUND test,
+     which is a test OF the check, not a league table of symbols.
+   - The change column is rendered in ONE neutral colour for every row, whatever the
+     sign. Green winners and red losers rank the table by eye just as effectively as a
+     sort would, and the sign is already right there in the number. */
+function CheckedLogPanel({ startedAt }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/checks");
+      /* A 404 on an endpoint this page KNOWS about almost always means the server
+         process predates the page it just served -- a dashboard left running from
+         before the route existed. That is invisible from the browser and it has cost
+         time twice now (see the stale-port check in src/api/serve.py), so say it here
+         rather than showing a bare status code. */
+      if (res.status === 404) {
+        throw new Error(
+          "this server has no /checks route. It is almost certainly an older " +
+          "dashboard process still holding the port" +
+          (startedAt ? ` (it started at ${hhmmss(startedAt)})` : "") +
+          ". Stop it and relaunch: python -m src.cli dashboard");
+      }
+      if (!res.ok) throw new Error(`server returned ${res.status}`);
+      setData(await res.json());
+      setError(null);
+    } catch (e) {
+      setError(String(e.message || e));
+    }
+  }, [startedAt]);
+
+  useEffect(() => {
+    load();
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
+  }, [load]);
+
+  const rows = (data && data.rows) || [];
+  const s = data && data.summary;
+
+  const verdictCls = (v) => v === "SOUND" ? "bg-slate-200 text-black"
+    : v === "UNSOUND" ? "bg-amber-300 text-black" : "bg-slate-600 text-white";
+
+  return (
+    <Panel title="Checked today — what happened after">
+      {error && (
+        <div data-testid="checked-log-error"
+             className="rounded bg-red-800 text-white px-3 py-2 text-[15px] font-bold">
+          Could not load the check log: {error}
+        </div>
+      )}
+
+      {s && (
+        <div data-testid="checked-log-summary"
+             className={`rounded p-4 ring-1 ${s.conclusive
+               ? "bg-slate-800 ring-slate-500" : "bg-slate-800/60 ring-slate-700"}`}>
+          <div className="flex flex-wrap items-baseline gap-3">
+            <span data-testid="checked-log-verdict"
+                  className="px-3 py-1 rounded font-black text-lg bg-slate-600 text-white">
+              {s.label}
+            </span>
+            <span className="text-[15px] text-slate-400">
+              does the verdict predict what happened next?
+            </span>
+          </div>
+          <p className="mt-2 text-[15px] leading-relaxed">{s.headline}</p>
+          <div className="mt-2 text-sm text-slate-400 tabnum">
+            SOUND n={s.sound_n}, mean {signed(s.sound_mean_pct, 3)}% ·
+            UNSOUND n={s.unsound_n}, mean {signed(s.unsound_mean_pct, 3)}%
+            {s.live_excluded > 0 && ` · ${s.live_excluded} still running, excluded`}
+          </div>
+          <Why id="why-checked-log" label="How this is counted, and what it cannot say">
+            <p>
+              A check settles {s.settle_minutes} minutes after it was made, capped at the
+              15:15 square-off, and the outcome is then frozen. Checks that have not
+              settled yet are shown in the table but kept out of the numbers above — a
+              figure that is still moving is not an outcome.
+            </p>
+            <p>
+              The interval is computed on independent MINUTES, not on rows. One press of
+              "check all" produces a row per symbol in the same minute; those rows share
+              that minute's market move and are one draw, not many. Counting them
+              separately would shrink the interval by roughly the square root of the
+              number of symbols and manufacture a finding out of one quiet afternoon.
+            </p>
+            <p>
+              At least {s.minimum_n_each} settled checks of each verdict are needed
+              before any claim is made. Below that this says INCONCLUSIVE, which is a
+              statement about the sample and not about the check.
+            </p>
+            <p>
+              This has already been measured offline on six years of data: across 96,720
+              evaluations the SOUND/UNSOUND verdict did not separate forward 60-minute
+              returns to any degree worth acting on, and the gap was ~6x too small to pay
+              for a round trip. Your own sample is not expected to overturn that — see
+              reports/entry_check_diagnostic.md.
+            </p>
+          </Why>
+        </div>
+      )}
+
+      {rows.length === 0 ? (
+        <div data-testid="checked-log-empty" className="mt-4 text-[15px] text-slate-400">
+          No checks logged yet. Every entry check you run is recorded here with what
+          happened afterwards.
+        </div>
+      ) : (
+        <div className="mt-4 overflow-x-auto">
+          <div className="text-sm text-slate-400 mb-2">
+            {data.total} checks · newest first
+          </div>
+          <table data-testid="checked-log-table" className="w-full text-[15px]">
+            <thead>
+              <tr className="text-left text-xs uppercase tracking-wider text-slate-400">
+                <th className="py-2 pr-4">checked at</th>
+                <th className="py-2 pr-4">symbol</th>
+                <th className="py-2 pr-4">verdict</th>
+                <th className="py-2 pr-4">price at check</th>
+                <th className="py-2 pr-4">price now</th>
+                <th className="py-2 pr-4">change since you checked</th>
+                <th className="py-2">reason</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.check_id} data-testid="checked-log-row"
+                    className="border-t border-slate-800 align-top">
+                  <td className="py-3 pr-4 tabnum whitespace-nowrap">
+                    {hhmmss(r.checked_at)}
+                    <div className="text-xs text-slate-500">{r.trade_date}</div>
+                  </td>
+                  <td className="py-3 pr-4 font-bold">{r.symbol}</td>
+                  <td className="py-3 pr-4">
+                    <span className={`px-2 py-0.5 rounded text-xs font-black
+                                      ${verdictCls(r.verdict)}`}>
+                      {r.verdict}
+                    </span>
+                  </td>
+                  <td className="py-3 pr-4 tabnum">{num(r.price_at_check)}</td>
+                  <td className="py-3 pr-4 tabnum">
+                    {num(r.price_now)}
+                    <div className="text-xs text-slate-500">
+                      {r.outcome_state === "SETTLED" ? `settled ${hhmmss(r.price_now_at)}`
+                        : r.outcome_state === "UNRESOLVED" ? "no data"
+                        : "still running"}
+                    </div>
+                  </td>
+                  {/* One neutral colour for every row, whatever the sign. Colouring
+                      winners green ranks the table by eye exactly as a sort would. */}
+                  <td className="py-3 pr-4 tabnum text-slate-200">
+                    {r.change_since_you_checked_pct === null
+                      ? "—" : `${signed(r.change_since_you_checked_pct, 2)}%`}
+                  </td>
+                  <td className="py-3 text-slate-300 leading-relaxed">{r.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <Why id="why-checked-log-purpose" label="What this table is and is not">
+        <p>
+          A record of checks you already made, newest first. It is
+          <strong className="text-slate-100"> not a list of what to buy</strong>.
+        </p>
+        <p>
+          Rows are ordered by when you checked and by nothing else. There is no sort by
+          return and there deliberately never will be — a descending return column is a
+          buy list whatever the header says. There is no verdict filter, so SOUND and
+          UNSOUND always appear together, and no row is marked as the one to pick.
+        </p>
+        <p>
+          "Change since you checked" is past tense. It describes what happened after a
+          check and says nothing whatever about what happens next.
+        </p>
+      </Why>
+    </Panel>
+  );
+}
+
+function Panel({ title, children }) {
+  return (
+    <div className="rounded-xl desk-card ring-1 p-5">
+      <h2 className="text-base font-bold uppercase tracking-widest text-slate-300 mb-3">
+        {title}
+      </h2>
+      {children}
+    </div>
+  );
+}
+
+function Input({ label, ...rest }) {
+  return (
+    <label className="block">
+      <div className="text-xs uppercase tracking-wider text-slate-400 mb-0.5">{label}</div>
+      <input {...rest} className="w-full px-3 py-2 rounded bg-slate-800 ring-1 ring-slate-600 text-[15px] tabnum" />
+    </label>
+  );
+}
+
+function MarketChart({ symbol }) {
+  const [chart, setChart] = useState(null);
+  const [error, setError] = useState(null);
+  const [interval, setInterval] = useState(1);
+  useEffect(() => {
+    let active = true;
+    setChart(null); setError(null);
+    fetch(`/market/${encodeURIComponent(symbol)}?interval=${interval}`)
+      .then((r) => { if (!r.ok) throw new Error(`Chart request returned ${r.status}`); return r.json(); })
+      .then((d) => { if (active) setChart(d); })
+      .catch((e) => { if (active) setError(String(e)); });
+    return () => { active = false; };
+  }, [symbol, interval]);
+
+  if (error) return <div role="alert" className="mt-4 rounded-lg bg-rose-950/60 p-4 text-rose-200">Chart unavailable: {error}</div>;
+  if (!chart) return <div className="mt-4 rounded-lg bg-slate-950/60 p-4 text-slate-400">Loading completed candles for {symbol}…</div>;
+  const allCandles = chart.candles || [];
+  const offset = Math.max(0, allCandles.length - 120);
+  const candles = allCandles.slice(-120);
+  if (!candles.length) return <div className="mt-4 rounded-lg bg-slate-950/60 p-4 text-slate-400">No completed candles for {symbol} in this session.</div>;
+  const W = 1000, H = 330, plotTop = 18, plotBottom = 264, volumeTop = 278, volumeBottom = 320;
+  const values = candles.flatMap((b) => [b.low, b.high]);
+  const structure = chart.structure || {};
+  const indexByTime = new Map(candles.map((b, i) => [b.time, i]));
+  const zones = (structure.order_blocks || []).filter((z) => indexByTime.has(z.formed_at));
+  const levels = [...(structure.swing_highs || []).filter((l) => l.bar >= offset).slice(-5),
+                  ...(structure.swing_lows || []).filter((l) => l.bar >= offset).slice(-5)];
+  const equalHighs = (structure.equal_highs || []).filter((l) => l.last_bar >= offset);
+  const equalLows = (structure.equal_lows || []).filter((l) => l.last_bar >= offset);
+  zones.forEach((z) => values.push(z.low, z.high));
+  equalHighs.forEach((l) => values.push(l.price)); equalLows.forEach((l) => values.push(l.price));
+  const min = Math.min(...values), max = Math.max(...values), span = Math.max(max - min, max * 0.0001, 0.01);
+  const y = (price) => plotTop + (max - price) / span * (plotBottom - plotTop);
+  const step = (W - 44) / Math.max(candles.length, 1), body = Math.max(2, Math.min(7, step * 0.62));
+  const maxVolume = Math.max(1, ...candles.map((b) => b.volume));
+
+  return (
+    <section className="mt-4 rounded-xl desk-card ring-1 ring-slate-700 p-4" aria-label={`${symbol} candlestick chart`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div><h3 className="text-xl font-black text-slate-100">{symbol} <span className="text-sm font-medium text-slate-400">{interval}m · {candles.length} completed bars shown</span></h3>
+          <p className="text-xs text-slate-500">As of {hhmmss(chart.asof)} · data {chart.stale ? "STALE" : "current"}</p></div>
+        <div className="flex items-center gap-2"><label className="text-xs text-slate-400">Candle size <select value={interval} onChange={(e) => setInterval(Number(e.target.value))} className="ml-1 rounded bg-slate-800 px-2 py-1 text-slate-100 ring-1 ring-slate-700"><option value="1">1 min</option><option value="5">5 min</option><option value="15">15 min</option></select></label><span className={`rounded-full px-3 py-1 text-xs font-bold ${chart.stale ? "bg-rose-950 text-rose-200" : "bg-emerald-950 text-emerald-200"}`}>{chart.stale ? "STALE DATA" : "FEED CURRENT"}</span></div>
+      </div>
+      {chart.stale && <div role="alert" className="mt-3 rounded-md bg-rose-950/70 px-3 py-2 text-sm font-bold text-rose-100">These candles are not current. Treat the displayed zones and levels as historical observations.</div>}
+      <div className="mt-3 overflow-x-auto rounded-lg bg-[#080d15]">
+        <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Candlesticks and volume for ${symbol}`} className="w-full min-w-[760px]">
+          {[0,1,2,3].map((i) => <g key={i}><line x1="32" x2="990" y1={plotTop + i * (plotBottom - plotTop) / 3} y2={plotTop + i * (plotBottom - plotTop) / 3} stroke="#263244" strokeDasharray="3 5"/><text x="2" y={plotTop + i * (plotBottom - plotTop) / 3 + 4} fill="#64748b" fontSize="11">{num(max - i * span / 3)}</text></g>)}
+          {zones.map((z, i) => { const at = indexByTime.get(z.formed_at); const x0 = at === undefined ? 32 : 32 + at * step; return <rect key={`z${i}`} x={x0} y={y(z.high)} width={Math.max(8, W - 42 - x0)} height={Math.max(2, y(z.low) - y(z.high))} fill={z.direction === "BULLISH" ? "#34d399" : "#fb7185"} fillOpacity=".13" stroke={z.direction === "BULLISH" ? "#34d399" : "#fb7185"} strokeOpacity=".65"><title>{z.direction} potential zone {num(z.low)}–{num(z.high)}</title></rect>; })}
+          {levels.map((l, i) => { const high = (structure.swing_highs || []).includes(l); return <line key={`l${i}`} x1="32" x2="990" y1={y(l.price)} y2={y(l.price)} stroke={high ? "#fbbf24" : "#38bdf8"} strokeOpacity=".55" strokeDasharray="5 5"><title>{high ? "Potential resistance / swing high" : "Potential support / swing low"} {num(l.price)}</title></line>; })}
+          {equalHighs.map((l, i) => <line key={`eh${i}`} x1="32" x2="990" y1={y(l.price)} y2={y(l.price)} stroke="#c084fc" strokeOpacity=".8" strokeDasharray="3 4"><title>Potential equal highs · {l.touches} pivots near {num(l.price)}</title></line>)}
+          {equalLows.map((l, i) => <line key={`el${i}`} x1="32" x2="990" y1={y(l.price)} y2={y(l.price)} stroke="#38bdf8" strokeOpacity=".8" strokeDasharray="3 4"><title>Potential equal lows · {l.touches} pivots near {num(l.price)}</title></line>)}
+          {candles.map((b, i) => { const x = 34 + i * step, up = b.close >= b.open, color = up ? "#34d399" : "#fb7185"; const top = y(Math.max(b.open, b.close)), height = Math.max(1.5, Math.abs(y(b.open) - y(b.close))); return <g key={b.time}><line x1={x + body/2} x2={x + body/2} y1={y(b.high)} y2={y(b.low)} stroke={color} strokeWidth="1.4"/><rect x={x} y={top} width={body} height={height} fill={color}><title>{hhmmss(b.time)} O {num(b.open)} H {num(b.high)} L {num(b.low)} C {num(b.close)}</title></rect><rect x={x} y={volumeBottom - b.volume/maxVolume*(volumeBottom-volumeTop)} width={body} height={Math.max(1,b.volume/maxVolume*(volumeBottom-volumeTop))} fill={color} fillOpacity=".55"/></g>; })}
+          <line x1="32" x2="990" y1={volumeTop-4} y2={volumeTop-4} stroke="#334155"/>
+        </svg>
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-3 text-sm">
+        <div className="rounded-lg bg-slate-950/60 p-3"><div className="font-bold text-slate-200">Potential order block zones</div><div className="mt-1 text-slate-400">{zones.length ? zones.map((z) => `${z.direction} ${num(z.low)}–${num(z.high)}`).join(" · ") : "No pattern met the displayed mechanical rule."}</div></div>
+        <div className="rounded-lg bg-slate-950/60 p-3"><div className="font-bold text-slate-200">Swing highs · potential resistance / buy-side liquidity</div><div className="mt-1 text-slate-400">{levels.filter((l) => (structure.swing_highs || []).includes(l)).map((l) => num(l.price)).join(" · ") || "No confirmed pivots."}</div></div>
+        <div className="rounded-lg bg-slate-950/60 p-3"><div className="font-bold text-slate-200">Swing lows · potential support / sell-side liquidity</div><div className="mt-1 text-slate-400">{(structure.swing_lows || []).slice(-5).map((l) => num(l.price)).join(" · ") || "No confirmed pivots."}</div></div>
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 text-sm"><div className="rounded-lg bg-purple-950/30 p-3"><div className="font-bold text-purple-200">Equal highs</div><div className="mt-1 text-slate-400">{equalHighs.map((l) => `${num(l.price)} (${l.touches} pivots)`).join(" · ") || "No equal-high clusters."}</div></div><div className="rounded-lg bg-sky-950/30 p-3"><div className="font-bold text-sky-200">Equal lows</div><div className="mt-1 text-slate-400">{equalLows.map((l) => `${num(l.price)} (${l.touches} pivots)`).join(" · ") || "No equal-low clusters."}</div></div></div>
+      <p className="mt-3 text-xs leading-relaxed text-slate-500">{chart.disclaimer} Levels use confirmed two-bar pivots; equal highs/lows use a tolerance derived from price and recent ATR. This is a mechanical annotation, not a verified order-flow feed.</p>
+    </section>
+  );
+}
+
+function MarketPanel({ market }) {
+  const [selected, setSelected] = useState(null);
+  const rows = (market && market.symbols) || [];
+  const valid = rows.filter((r) => !r.stale && r.state !== "NO_DATA");
+  const up = valid.filter((r) => r.state === "UP_FROM_BASELINE");
+  const down = valid.filter((r) => r.state === "DOWN_FROM_BASELINE");
+  const flat = valid.filter((r) => r.state === "AT_BASELINE");
+  const indexRows = (market && market.indices && market.indices.symbols) || [];
+  const unavailable = !market;
+  const SymbolRows = ({ items, tone }) => items.length ? <div className="divide-y divide-slate-800">{items.map((r) => <div key={r.symbol} className="flex items-center justify-between gap-3 py-2.5"><div><span className="font-bold text-slate-100">{r.symbol}</span><span className="ml-2 text-xs text-slate-500">{r.bars} bars</span></div><div className="flex items-center gap-3"><span className={`tabnum font-bold ${tone}`}>{signed(r.change_from_baseline_pct)}%</span><button type="button" onClick={() => setSelected(r.symbol)} className="rounded px-2.5 py-1 text-xs font-semibold text-sky-200 ring-1 ring-slate-700 hover:bg-slate-800">Chart</button></div></div>)}</div> : <p className="py-3 text-sm text-slate-500">No fresh symbols in this group.</p>;
+
+  return (
+    <section id="overview" className="scroll-mt-36 space-y-4" aria-label="Market overview and scanner">
+      <div className="flex flex-wrap items-end justify-between gap-3"><div><div className="text-xs uppercase tracking-[.2em] text-sky-300 font-bold">Observed market</div><h2 className="mt-1 text-2xl font-black">Market X-Ray</h2><p className="text-sm text-slate-400">Completed candles · descriptive breadth, not a prediction</p></div>
+        {market && <div className="text-right text-xs text-slate-500">{market.coverage.fresh}/{market.coverage.subscribed} symbols fresh · as of {hhmmss(market.asof)}</div>}</div>
+      {unavailable ? <div role="status" className="rounded-xl desk-card ring-1 p-5 text-slate-400">Waiting for the first market snapshot. Coverage is limited to symbols subscribed in this session.</div> : <>
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="rounded-xl desk-card ring-1 ring-slate-700 p-4"><div className="text-xs uppercase tracking-widest text-slate-400">Up from first bar</div><div className="mt-1 text-3xl font-black text-emerald-300 tabnum">{market.breadth.up_from_baseline}</div></div>
+          <div className="rounded-xl desk-card ring-1 ring-slate-700 p-4"><div className="text-xs uppercase tracking-widest text-slate-400">Down from first bar</div><div className="mt-1 text-3xl font-black text-rose-300 tabnum">{market.breadth.down_from_baseline}</div></div>
+          <div className="rounded-xl desk-card ring-1 ring-slate-700 p-4"><div className="text-xs uppercase tracking-widest text-slate-400">At first-bar baseline</div><div className="mt-1 text-3xl font-black text-slate-200 tabnum">{market.breadth.at_baseline}</div></div>
+          <div className="rounded-xl desk-card ring-1 ring-slate-700 p-4"><div className="text-xs uppercase tracking-widest text-slate-400">Stale / no bars</div><div className="mt-1 text-3xl font-black text-amber-200 tabnum">{market.coverage.stale} / {market.coverage.without_bars}</div></div>
+          <div className="col-span-2 lg:col-span-1 rounded-xl border border-slate-700 bg-slate-950/60 p-4"><div className="text-xs uppercase tracking-widest text-slate-400">Index context</div>{indexRows.length ? indexRows.map((r) => <div key={r.symbol} className="mt-2 flex items-center justify-between gap-2"><div><div className="text-xs font-bold text-slate-400">{r.symbol}</div><div className="tabnum font-black text-slate-100">{r.last_price == null ? "—" : `₹${num(r.last_price)}`}</div></div><span className={`tabnum text-sm font-bold ${r.stale ? "text-amber-300" : Number(r.change_from_baseline_pct) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{r.stale ? "STALE" : r.change_from_baseline_pct == null ? "NO BARS" : `${signed(r.change_from_baseline_pct)}%`}</span></div>) : <div className="mt-2 font-bold text-slate-300">NIFTY · BANK NIFTY</div>}<div className="mt-1 text-xs text-slate-500">{indexRows.length ? "Index prices from first available bar" : "Not subscribed to this feed"}</div></div>
+        </div>
+        {(market.coverage.stale > 0 || market.coverage.without_bars > 0) && <div role="status" className="rounded-lg border border-amber-700/60 bg-amber-950/30 px-4 py-3 text-sm text-amber-100">Some symbols have stale data or no completed bars. They are excluded from current breadth. Per-symbol status is shown below.</div>}
+        <div id="scanner" className="grid gap-4 lg:grid-cols-2 scroll-mt-36">
+          <Panel title="Observed up from first available bar"><p className="mb-2 text-xs text-slate-500">Alphabetical · movement only · no ranking</p><SymbolRows items={up} tone="text-emerald-300"/></Panel>
+          <Panel title="Observed down from first available bar"><p className="mb-2 text-xs text-slate-500">Alphabetical · movement only · no ranking</p><SymbolRows items={down} tone="text-rose-300"/></Panel>
+        </div>
+        <Panel title="Sector breadth"><p className="mb-3 text-xs text-slate-500">Counts among fresh symbols in the subscribed set. Unknown mappings remain visible.</p><div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{(market.sectors || []).map((s) => <div key={s.sector} className="flex items-center justify-between rounded-lg bg-slate-950/60 px-3 py-2 text-sm"><span className="font-semibold text-slate-300">{s.sector}</span><span className="tabnum"><b className="text-emerald-300">{s.up}↑</b><span className="mx-2 text-slate-600">/</span><b className="text-rose-300">{s.down}↓</b><span className="ml-2 text-slate-500">{s.flat} flat</span></span></div>)}</div></Panel>
+        <Panel title="Movement scanner"><p className="mb-2 text-xs text-slate-500">Coverage: {market.coverage.subscribed} subscribed stock symbols. Rows stay alphabetical. Change is from each symbol’s first available bar; stale rows do not enter breadth.</p><div className="grid gap-x-6 sm:grid-cols-2 xl:grid-cols-3">{rows.map((r) => <div key={r.symbol} className="flex items-center justify-between gap-2 border-b border-slate-800 py-2"><div><span className="font-bold">{r.symbol}</span><div className={`text-[11px] ${r.stale || r.state === "NO_DATA" ? "text-amber-300" : "text-slate-500"}`}>{r.stale ? "STALE DATA" : r.state === "NO_DATA" ? "NO BARS" : r.state.replaceAll("_", " ")}</div></div><div className="flex items-center gap-2">{r.change_from_baseline_pct !== undefined && <span className="tabnum text-sm text-slate-300">{signed(r.change_from_baseline_pct)}%</span>}<button type="button" onClick={() => setSelected(r.symbol)} className="rounded px-2 py-1 text-xs text-sky-200 ring-1 ring-slate-700 hover:bg-slate-800">Chart</button></div></div>)}</div></Panel>
+        {selected && <div id="charts" className="scroll-mt-36"><div className="mb-2 flex items-center justify-between"><h2 className="text-lg font-bold">Structure chart</h2><button type="button" onClick={() => setSelected(null)} className="rounded px-3 py-1 text-sm text-slate-300 ring-1 ring-slate-700">Close chart</button></div><MarketChart symbol={selected}/></div>}
+        <p className="rounded-lg border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs leading-relaxed text-slate-500">Universe: {market.coverage.universe.state === "FULL_CURRENT_MASTER" ? `full dated F&O master (${market.coverage.universe.master_symbols} stocks), as of ${market.coverage.universe.as_of}` : market.coverage.universe.state === "MAINTAINED_LIQUID_SUBSET" ? "maintained liquid F&O subset; run refresh-universe for the current full list" : market.coverage.universe.state === "MASTER_STALE_OR_INVALID" ? "saved F&O master is stale or invalid; using the subscribed set" : "custom subscribed symbol set"}. This scanner describes movement from the earliest available completed candle. It does not rank opportunities or predict returns.</p>
+      </>}
+    </section>
+  );
+}
+
+function JournalPanel({ positions = [] }) {
+  const [data, setData] = useState(null);
+  const [symbol, setSymbol] = useState("");
+  const [decision, setDecision] = useState("SKIPPED");
+  const [referencePrice, setReferencePrice] = useState("");
+  const [note, setNote] = useState("");
+  const [positionId, setPositionId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState(null);
+  const [error, setError] = useState(null);
+  const refresh = useCallback(async () => {
+    const r = await fetch("/journal");
+    if (!r.ok) throw new Error(`Journal request returned ${r.status}`);
+    setData(await r.json());
+  }, []);
+  useEffect(() => {
+    refresh().catch((e) => setError(String(e)));
+    const timer = setInterval(() => refresh().catch((e) => setError(String(e))), 15000);
+    return () => clearInterval(timer);
+  }, [refresh]);
+  const submit = async (e) => {
+    e.preventDefault(); setBusy(true); setError(null); setMessage(null);
+    try {
+      const r = await fetch("/journal/decisions", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbol, decision, position_id: positionId || null, reference_price: referencePrice ? Number(referencePrice) : null, note }) });
+      const payload = await r.json();
+      if (!r.ok) throw new Error(payload.detail || `Journal save returned ${r.status}`);
+      setMessage(payload.note); setNote(""); await refresh();
+    } catch (e) { setError(String(e)); }
+    finally { setBusy(false); }
+  };
+  const money = (v) => v == null ? "—" : `₹${num(v)}`;
+  return (
+    <section id="journal" className="scroll-mt-36 space-y-4" aria-label="Trading journal">
+      <div><div className="text-xs uppercase tracking-[.2em] text-sky-300 font-bold">Decision record</div><h2 className="mt-1 text-2xl font-black">Journal &amp; analytics</h2><p className="text-sm text-slate-400">Manual fills, skipped decisions, checks and exit guidance in one timeline.</p></div>
+      <Panel title="Record a decision"><form onSubmit={submit} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1fr_180px_180px_2fr_auto] items-end">
+        <Input label="symbol" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} required maxLength="32" placeholder="e.g. RELIANCE" />
+        <label><span className="block mb-1 text-xs uppercase tracking-wider text-slate-400">decision</span><select value={decision} onChange={(e) => setDecision(e.target.value)} className="w-full rounded bg-slate-800 px-3 py-2 ring-1 ring-slate-600 text-sm"><option value="SKIPPED">Skipped</option><option value="TAKEN">Taken</option></select></label>
+        <Input label="reference price (optional)" type="number" min="0.01" step="0.01" value={referencePrice} onChange={(e) => setReferencePrice(e.target.value)} />
+        <label><span className="block mb-1 text-xs uppercase tracking-wider text-slate-400">linked position (optional)</span><select value={positionId} onChange={(e) => setPositionId(e.target.value)} className="w-full rounded bg-slate-800 px-3 py-2 ring-1 ring-slate-600 text-sm"><option value="">No linked position</option>{positions.map((p) => <option key={p.position_id} value={p.position_id}>{p.symbol} · {p.position_id}</option>)}</select></label>
+        <Input label="note" value={note} onChange={(e) => setNote(e.target.value)} maxLength="1200" placeholder="Reason, context, or what you observed" />
+        <button disabled={busy || !symbol.trim()} className="rounded-lg bg-sky-400 px-4 py-2 font-bold text-slate-950 disabled:opacity-50">{busy ? "Saving…" : "Save note"}</button>
+      </form><p className="mt-2 text-xs text-slate-500">A decision note does not create a position. Record fills separately in Position Tracker.</p>
+      {message && <div role="status" className="mt-2 text-sm text-emerald-300">{message}</div>}{error && <div role="alert" className="mt-2 text-sm text-rose-300">Journal issue: {error}</div>}</Panel>
+      {data && <>
+        {data.read_errors && data.read_errors.map((e, i) => <div key={i} role="alert" className="rounded-lg border border-rose-700 bg-rose-950/50 px-4 py-3 text-sm text-rose-100">{e}</div>)}
+        {!data.cost_model_verified && <div role="status" className="rounded-lg border border-amber-700/60 bg-amber-950/30 px-4 py-3 text-sm text-amber-100">Net P&amp;L is provisional: the cost model has not been reconciled with contract notes.</div>}
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="rounded-xl desk-card ring-1 ring-slate-700 p-4"><div className="text-xs uppercase tracking-widest text-slate-400">Closed fills</div><div className="mt-1 text-2xl font-black tabnum">{data.analytics.closed_trade_count}</div></div>
+          <div className="rounded-xl desk-card ring-1 ring-slate-700 p-4"><div className="text-xs uppercase tracking-widest text-slate-400">Gross realised</div><div className="mt-1 text-2xl font-black tabnum">{money(data.analytics.gross_realised)}</div></div>
+          <div className="rounded-xl desk-card ring-1 ring-slate-700 p-4"><div className="text-xs uppercase tracking-widest text-slate-400">Modelled costs</div><div className="mt-1 text-2xl font-black tabnum text-amber-200">{money(data.analytics.modelled_costs)}</div></div>
+          <div className="rounded-xl desk-card ring-1 ring-slate-700 p-4"><div className="text-xs uppercase tracking-widest text-slate-400">Net realised</div><div className={`mt-1 text-2xl font-black tabnum ${Number(data.analytics.net_realised) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{money(data.analytics.net_realised)}</div></div>
+        </div>
+        {data.analytics.check_summary && <div className="rounded-lg bg-slate-950/60 px-4 py-3 text-sm text-slate-300"><span className="font-bold">Check outcome review: </span>{data.analytics.check_summary.headline}</div>}
+        <div className="grid gap-4 xl:grid-cols-2">
+          <Panel title={`Closed fills · ${data.trades.length}`}>
+            {data.trades.length ? <div className="space-y-2">{data.trades.map((t) => <div key={t.position_id} className="rounded-lg bg-slate-950/60 p-3"><div className="flex justify-between gap-2"><b>{t.symbol} · {t.quantity} shares</b><span className={`tabnum font-bold ${Number(t.net_pnl) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>Net {money(t.net_pnl)}</span></div><div className="mt-1 text-xs text-slate-400">Entry {money(t.entry_price)} → exit {money(t.exit_price)} · costs {money(t.costs)} · {new Date(t.exit_time).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</div></div>)}</div> : <p className="text-sm text-slate-500">No manually closed fills recorded yet.</p>}
+          </Panel>
+          <Panel title={`Decision notes · ${data.decisions.length}`}>
+            {data.decisions.length ? <div className="space-y-2">{data.decisions.slice(0, 12).map((d) => <div key={d.event_id} className="rounded-lg bg-slate-950/60 p-3"><div className="flex justify-between gap-2"><b>{d.symbol}</b><span className={`text-xs font-black ${d.decision === "TAKEN" ? "text-sky-300" : "text-amber-300"}`}>{d.decision}</span></div><div className="mt-1 text-sm text-slate-300">{d.note || "No note supplied."}</div><div className="mt-1 text-xs text-slate-500">{d.position_id ? `Position ${d.position_id} · ${d.outcome?.state === "CLOSED" ? `closed net ${money(d.outcome.net_pnl)}` : "open or not closed"} · ` : ""}{d.reference_price ? `Reference ₹${num(d.reference_price)} · ` : ""}{new Date(d.recorded_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</div></div>)}</div> : <p className="text-sm text-slate-500">No taken or skipped decisions noted yet.</p>}
+          </Panel>
+          <Panel title={`Entry checks · ${data.checks.length}`}>
+            {data.checks.length ? <div className="max-h-72 space-y-2 overflow-auto">{data.checks.slice(0, 15).map((c) => <div key={c.check_id} className="flex items-start justify-between gap-3 border-b border-slate-800 py-2 text-sm"><div><b>{c.symbol}</b><div className="text-xs text-slate-400">{c.reason}</div></div><span className="shrink-0 text-xs text-slate-400">{c.verdict} · {c.outcome_state}</span></div>)}</div> : <p className="text-sm text-slate-500">No checks recorded.</p>}
+          </Panel>
+          <Panel title={`Exit advice history · ${data.exit_advice.length}`}>
+            {data.exit_advice.length ? <div className="max-h-72 space-y-2 overflow-auto">{data.exit_advice.slice(0, 12).map((a, i) => <div key={`${a.asof}-${a.symbol}-${i}`} className="rounded-lg bg-slate-950/60 p-3"><div className="flex justify-between gap-2"><b>{a.symbol}</b><span className={a.stale ? "text-amber-300" : "text-slate-300"}>{a.stale ? "STALE" : a.state}</span></div><div className="mt-1 text-sm text-slate-400">{a.reason}</div>{a.net_pnl != null && <div className="mt-1 text-xs text-slate-500">Gross {money(a.gross_pnl)} · net {money(a.net_pnl)} · costs {money(a.costs)}</div>}</div>)}</div> : <p className="text-sm text-slate-500">No exit advice has been recorded yet.</p>}
+          </Panel>
+        </div>
+        <p className="text-xs text-slate-500">{data.disclaimer}</p>
+      </>}
+    </section>
+  );
+}
+
+/* ---------------------------------------------------------------- app */
+
+function App() {
+  const [snap, setSnap] = useState(null);
+  const [connected, setConnected] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
+  const wsRef = useRef(null);
+  const retry = useRef(0);
+
+  const connect = useCallback(() => {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${proto}://${location.host}/stream`);
+    wsRef.current = ws;
+    ws.onopen = () => { setConnected(true); retry.current = 0; };
+    ws.onmessage = (e) => setSnap(JSON.parse(e.data));
+    ws.onclose = () => {
+      setConnected(false);
+      const delay = Math.min(10000, 500 * Math.pow(2, retry.current++));
+      setTimeout(connect, delay);
+    };
+    ws.onerror = () => ws.close();
+  }, []);
+
+  const refresh = useCallback(async () => {
+    const res = await fetch("/positions");
+    if (res.ok) {
+      const data = await res.json();
+      setSnap({ health: data.health, positions: data.positions,
+                event_risk: data.event_risk, market: data.market });
+    } else {
+      setFetchError(`GET /positions returned ${res.status}`);
+    }
+  }, []);
+
+  useEffect(() => { connect(); return () => wsRef.current && wsRef.current.close(); }, [connect]);
+
+  /* Fetch once on mount rather than waiting for the first socket push. The page used
+     to depend on the websocket for its ONLY data, so anything that stopped the server
+     pushing left it sitting on empty defaults indefinitely -- with no error, because
+     from the page's point of view nothing had failed yet. */
+  useEffect(() => { refresh().catch((e) => setFetchError(String(e))); }, [refresh]);
+
+  const closePosition = async (id, price) => {
+    await fetch(`/positions/${id}`, {
+      method: "DELETE", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ exit_price: price }),
+    });
+    refresh();
+  };
+
+  const positions = (snap && snap.positions) || [];
+  // Most urgent first, so a second-monitor glance lands on what matters.
+  const ORDER = ["STALE_DATA", "FORCE_EXIT", "EXIT_NOW", "INVALID_ENTRY", "TIME_EXIT",
+                 "PARTIAL_EXIT", "TRAIL", "HOLD"];
+  const sorted = [...positions].sort(
+    (a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state));
+  const empty = sorted.length === 0;
+  /* Lets the empty state trigger the bulk check that already exists, rather than
+     duplicating the fetch. One implementation, one set of guarantees. */
+  const runAllRef = useRef(null);
+
+  return (
+    <div id="top" className="min-h-full desk-grid">
+      <Header health={snap && snap.health} connected={connected} />
+      {fetchError && (
+        <div data-testid="fetch-error"
+             className="alarm bg-red-700 text-white font-bold px-4 py-3 text-lg">
+          Cannot reach the server: {fetchError}. Nothing on this page is current.
+        </div>
+      )}
+      <main className="max-w-[1680px] mx-auto p-4 sm:p-6 space-y-5">
+        <section className="flex flex-wrap items-end justify-between gap-4 py-2">
+          <div>
+            <div className="text-xs uppercase tracking-[.22em] text-sky-300 font-bold">Your market workspace</div>
+            <h1 className="mt-1 text-3xl sm:text-4xl font-black tracking-tight text-slate-50">Position desk</h1>
+            <p className="mt-1 text-sm sm:text-base text-slate-400">Monitor open risk, review exit guidance, and check symbols in one place.</p>
+          </div>
+          <div className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-950/80 px-3 py-1.5 text-xs font-semibold text-slate-300">
+            <span className={`inline-block w-2 h-2 rounded-full ${connected ? "bg-emerald-400" : "bg-amber-400"}`}></span>
+            {connected ? "Streaming updates" : "Reconnecting to updates"}
+          </div>
+        </section>
+        <MarketPanel market={snap && snap.market} />
+        {/* B. Health summary. Four operational facts, above everything, always. */}
+        <HealthRow health={snap && snap.health} positions={positions} />
+
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_400px] gap-4 items-start">
+        {/* C/D. The wide column: positions own it when there are any, and the empty
+            state offers the two things there are to do when there are none. */}
+        <div id="positions" className="space-y-4 scroll-mt-36">
+          {empty ? (
+            <>
+              <section data-testid="no-positions"
+                   className="rounded-lg bg-slate-900/70 ring-1 ring-slate-700 px-5 py-5">
+                <h2 className="text-lg font-bold text-slate-200">No open positions</h2>
+                <p className="mt-1 text-[15px] text-slate-400 leading-relaxed">
+                  Nothing is being tracked, so there is no exit advice to give. Two
+                  things you can do from here — neither of them places an order, and
+                  no order is ever placed by this tool.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button type="button" onClick={() => runAllRef.current && runAllRef.current()}
+                    className="px-4 py-2.5 rounded bg-slate-700 hover:bg-slate-600
+                               font-semibold text-[15px] focus:outline-none
+                               focus:ring-2 focus:ring-sky-400">
+                    Check tracked symbols
+                  </button>
+                  <button type="button" onClick={() => {
+                      const f = document.querySelector('[data-testid="add-position-form"]');
+                      if (f) { f.scrollIntoView({ block: "center" });
+                               const i = f.querySelector("input"); if (i) i.focus(); }
+                    }}
+                    className="px-4 py-2.5 rounded bg-slate-700 hover:bg-slate-600
+                               font-semibold text-[15px] focus:outline-none
+                               focus:ring-2 focus:ring-sky-400">
+                    Record a manually executed position
+                  </button>
+                </div>
+              </section>
+              <div id="checks" className="space-y-4 scroll-mt-36"><CheckAllPanel prominent onReady={(fn) => (runAllRef.current = fn)} />
+              <CheckedLogPanel startedAt={snap && snap.health && snap.health.started_at} /></div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-baseline gap-3">
+                <h1 className="text-base font-bold uppercase tracking-widest text-slate-300">
+                  Open positions
+                </h1>
+                <span className="text-[15px] text-slate-400">{sorted.length}</span>
+              </div>
+              {sorted.map((p) => (
+                <PositionCard key={p.position_id} p={p} onClose={closePosition} />
+              ))}
+              <div id="checks" className="space-y-4 scroll-mt-36"><CheckAllPanel onReady={(fn) => (runAllRef.current = fn)} />
+              <CheckedLogPanel startedAt={snap && snap.health && snap.health.started_at} /></div>
+            </>
+          )}
+          <JournalPanel positions={snap?.positions || []} />
+        </div>
+
+        <div className="space-y-4">
+          <CheckEntryPanel />
+          <AddPositionForm onAdded={refresh} />
+          <div id="event-risk" className="scroll-mt-36"><EventRiskPanel er={snap && snap.event_risk} /></div>
+          {/* data-disclaimer marks safety prose that necessarily NAMES what it
+              disclaims. The page-wide "no recommendation wording" scan removes these
+              before checking, because otherwise the guard flags its own safety text --
+              the trap every substring scan in this project has hit. */}
+          <div data-disclaimer
+               className="rounded-lg bg-slate-900/60 ring-1 ring-slate-700 p-5">
+            <h2 className="text-base font-bold uppercase tracking-widest text-slate-300">
+              Advisory only
+            </h2>
+            <p className="mt-2 text-[15px] leading-relaxed text-slate-300">
+              This system never places, modifies or cancels an order.
+            </p>
+            <Why id="why-advisory" label="Why there is no signal panel">
+              <p>
+                Every exit is executed by you, manually, in your broker app. No broker
+                order endpoint is reachable from this process.
+              </p>
+              <p>
+                There is no signal panel. The ranking engine was evaluated at intraday,
+                1-day, 3-day and 5-day horizons and produced no edge over a naive
+                comparator at any of them, so showing its scores here would present a
+                known-negative result as a recommendation.
+              </p>
+            </Why>
+          </div>
+        </div>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

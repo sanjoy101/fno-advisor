@@ -1,0 +1,22 @@
+{
+  "fingerprint": "0ed3e192ad2ec155",
+  "note": "best DEV config: trail=2.0x",
+  "claimed_at": "2026-08-21T01:54:53+05:30",
+  "holdout_from": "2026-07-16",
+  "holdout_to": "2026-08-19",
+  "holdout_sessions": 25,
+  "config": {
+    "breakeven_atr_multiple": "1.0",
+    "trail_atr_multiple": "2.0",
+    "t1_atr_multiple": "1.5",
+    "partial_exit_fraction": "0.5",
+    "time_exit_minutes": 90,
+    "time_exit_pnl_pct_band": "0.3",
+    "time_exit_atr_multiple": "0.5",
+    "stale_feed_seconds": "30",
+    "vwap_loss_volume_ratio": "1.0",
+    "rsi_reversal_level": "50",
+    "momentum_confirmation_bars": 1,
+    "min_bars_for_advice": 15
+  }
+}

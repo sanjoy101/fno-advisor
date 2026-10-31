@@ -1,0 +1,38 @@
+# fno-advisor -- Python 3.11
+#
+# Install:  py -3.11 -m venv .venv
+#           .\.venv\Scripts\Activate.ps1
+#           pip install -r requirements.txt
+
+# ---- Broker (READ-ONLY usage; order endpoints are never called) --------------
+fyers-apiv3==3.1.7
+
+# ---- Data ---------------------------------------------------------------------
+pandas==2.2.3
+duckdb==1.1.3
+pyarrow==18.1.0
+
+# ---- API ----------------------------------------------------------------------
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# ---- Config -------------------------------------------------------------------
+pydantic==2.10.4
+pydantic-settings==2.7.0     # BaseSettings moved out of pydantic core in v2
+python-dotenv==1.0.1
+
+# ---- Time ---------------------------------------------------------------------
+# REQUIRED on Windows. Windows ships no IANA tz database, so stdlib zoneinfo cannot
+# resolve "Asia/Kolkata" without this package -- ZoneInfo() raises
+# ZoneInfoNotFoundError at import time. Not optional.
+tzdata==2024.2
+
+# REQUIRED, though our own code never imports it. DuckDB's Python client needs pytz
+# to materialise TIMESTAMPTZ columns -- without it, any query touching a timestamp
+# fails with "Required module 'pytz' failed to import". pandas/fyers_apiv3 paths
+# reach for it too. Our code uses stdlib zoneinfo (see CLAUDE.md 1.3).
+pytz==2024.2
+
+# ---- Test / HTTP --------------------------------------------------------------
+pytest==8.3.4
+httpx==0.28.1

@@ -1,0 +1,202 @@
+{
+  "panel": "full-history-2020",
+  "dev_from": "2020-01-01",
+  "dev_to": "2024-11-26",
+  "dev_sessions": 1212,
+  "symbols": 21,
+  "observations": 96720,
+  "verdict_overall": {
+    "slot": "all",
+    "n": 96720,
+    "sound": 35946,
+    "unsound": 60774,
+    "sound_pct": 37.17,
+    "partly_unevaluated": 1
+  },
+  "verdict_by_slot": [
+    {
+      "slot": "09:45",
+      "n": 24180,
+      "sound": 11156,
+      "unsound": 13024,
+      "sound_pct": 46.14,
+      "partly_unevaluated": 1
+    },
+    {
+      "slot": "11:00",
+      "n": 24180,
+      "sound": 8553,
+      "unsound": 15627,
+      "sound_pct": 35.37,
+      "partly_unevaluated": 0
+    },
+    {
+      "slot": "13:00",
+      "n": 24180,
+      "sound": 8152,
+      "unsound": 16028,
+      "sound_pct": 33.71,
+      "partly_unevaluated": 0
+    },
+    {
+      "slot": "14:30",
+      "n": 24180,
+      "sound": 8085,
+      "unsound": 16095,
+      "sound_pct": 33.44,
+      "partly_unevaluated": 0
+    }
+  ],
+  "problem_breakdown": [
+    {
+      "problem": "BELOW_VWAP",
+      "present_n": 51992,
+      "present_pct": 85.55,
+      "sole_cause_n": 17559,
+      "sole_cause_pct": 28.89
+    },
+    {
+      "problem": "MOMENTUM_REVERSED",
+      "present_n": 43215,
+      "present_pct": 71.11,
+      "sole_cause_n": 8782,
+      "sole_cause_pct": 14.45
+    },
+    {
+      "problem": "STOP_ALREADY_HIT",
+      "present_n": 0,
+      "present_pct": 0.0,
+      "sole_cause_n": 0,
+      "sole_cause_pct": 0.0
+    }
+  ],
+  "combinations": [
+    {
+      "combination": "BELOW_VWAP + MOMENTUM_REVERSED",
+      "n": 34433,
+      "pct": 56.66
+    },
+    {
+      "combination": "BELOW_VWAP",
+      "n": 17559,
+      "pct": 28.89
+    },
+    {
+      "combination": "MOMENTUM_REVERSED",
+      "n": 8782,
+      "pct": 14.45
+    }
+  ],
+  "vwap_deviation": {
+    "n": 51992,
+    "pct_below_vwap": {
+      "p10": 0.0559,
+      "p25": 0.1394,
+      "p50": 0.3003,
+      "p75": 0.5533,
+      "p90": 0.9042,
+      "p95": 1.206
+    },
+    "atr_below_vwap": {
+      "p10": 0.5456,
+      "p25": 1.3619,
+      "p50": 2.9801,
+      "p75": 5.5668,
+      "p90": 8.4535,
+      "p95": 10.3635
+    },
+    "n_with_atr": 51992,
+    "within_0.10pct": 17.98,
+    "within_0.25pct": 42.68,
+    "within_0.50pct": 71.01,
+    "within_0.25atr": 4.58,
+    "within_0.50atr": 9.15,
+    "within_1.00atr": 18.35
+  },
+  "forward_demeaned": {
+    "label": "60-min, demeaned",
+    "sound_n": 27859,
+    "sound_mean": 0.0177,
+    "unsound_n": 44661,
+    "unsound_mean": -0.011,
+    "diff": 0.0287,
+    "ci95_low": -0.0067,
+    "ci95_high": 0.0641,
+    "naive_ci95_low": 0.0208,
+    "naive_ci95_high": 0.0366,
+    "effective_n": 3626,
+    "mde": 0.0243
+  },
+  "forward_raw": {
+    "label": "60-min, raw",
+    "sound_n": 27859,
+    "sound_mean": 0.0172,
+    "unsound_n": 44661,
+    "unsound_mean": -0.0174,
+    "diff": 0.0346,
+    "ci95_low": -0.0072,
+    "ci95_high": 0.0763,
+    "naive_ci95_low": 0.0252,
+    "naive_ci95_high": 0.0439,
+    "effective_n": 3626,
+    "mde": 0.0288
+  },
+  "forward_truncated": {
+    "label": "14:30 slot, truncated at 15:15",
+    "sound_n": 8083,
+    "sound_mean": 0.0164,
+    "unsound_n": 16077,
+    "unsound_mean": -0.0083,
+    "diff": 0.0247,
+    "ci95_low": -0.0379,
+    "ci95_high": 0.0873,
+    "naive_ci95_low": 0.0107,
+    "naive_ci95_high": 0.0387,
+    "effective_n": 1208,
+    "mde": 0.0414
+  },
+  "forward_by_slot": [
+    {
+      "label": "09:45",
+      "sound_n": 11156,
+      "sound_mean": 0.0172,
+      "unsound_n": 13024,
+      "unsound_mean": -0.0147,
+      "diff": 0.032,
+      "ci95_low": -0.0395,
+      "ci95_high": 0.1035,
+      "naive_ci95_low": 0.016,
+      "naive_ci95_high": 0.0479,
+      "effective_n": 1209,
+      "mde": 0.0508
+    },
+    {
+      "label": "11:00",
+      "sound_n": 8553,
+      "sound_mean": 0.0144,
+      "unsound_n": 15627,
+      "unsound_mean": -0.0079,
+      "diff": 0.0222,
+      "ci95_low": -0.033,
+      "ci95_high": 0.0775,
+      "naive_ci95_low": 0.0099,
+      "naive_ci95_high": 0.0346,
+      "effective_n": 1209,
+      "mde": 0.0372
+    },
+    {
+      "label": "13:00",
+      "sound_n": 8150,
+      "sound_mean": 0.0218,
+      "unsound_n": 16010,
+      "unsound_mean": -0.0111,
+      "diff": 0.0328,
+      "ci95_low": -0.0215,
+      "ci95_high": 0.0872,
+      "naive_ci95_low": 0.0207,
+      "naive_ci95_high": 0.045,
+      "effective_n": 1208,
+      "mde": 0.0361
+    }
+  ]
+}
