@@ -90,7 +90,7 @@ def _equal_levels(pivots: list[tuple[int, float]], tolerance: float) -> list[dic
     ]
 
 
-def market_structure(bars: Sequence[Bar], *, max_zones: int = 6) -> dict:
+def market_structure(bars: Sequence[Bar], *, max_zones: int | None = None) -> dict:
     """Find confirmed swing, equal-price and displacement zones.
 
     A candidate zone is the last opposite-colour candle in the three bars before a
@@ -206,7 +206,7 @@ def market_structure(bars: Sequence[Bar], *, max_zones: int = 6) -> dict:
         "swing_lows": annotated_pivots(tail_lows, high=False),
         "equal_highs": equal_highs,
         "equal_lows": equal_lows,
-        "order_blocks": zones[-max_zones:],
+        "order_blocks": zones if max_zones is None else (zones[-max_zones:] if max_zones > 0 else []),
         "rules": {"pivot_wing_bars": 2,
                   "equal_level_tolerance": round(tolerance, 4),
                   "break_reference": "confirmed swing close",
