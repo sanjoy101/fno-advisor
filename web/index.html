@@ -188,6 +188,7 @@ function Header({ health, connected }) {
     LIVE:    "● LIVE",
     UNKNOWN: "◌ NO DATA — MODE UNKNOWN",
   }[mode];
+  const sessionClosed = /^(CLOSED|PRE-OPEN)/.test(String(h.session_state || ""));
 
   /* The two things that break this tool SILENTLY: an expired token stops the feed
      without an error on screen, and a quiet socket looks exactly like a quiet market.
@@ -277,10 +278,16 @@ function Header({ health, connected }) {
         </div>
       )}
       {mode === "LIVE" && stale && (
-        <div className="alarm bg-fuchsia-600 text-black font-black text-xl px-4 py-3">
-          FEED STALE — last tick {age(feed.tick_age_seconds)}. Exit advice is suppressed.
-          Verify prices in your broker app before acting.
-        </div>
+        sessionClosed ? (
+          <div role="status" data-testid="feed-stale-alert" className="border-t border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm font-semibold text-amber-100">
+            MARKET CLOSED — broker feed is disconnected. {feed.seeded_bars > 0 ? "Showing previous-session bars as historical context." : "No history bars were loaded for this session."} Price-based exit advice is suppressed; readings are not live.
+          </div>
+        ) : (
+          <div data-testid="feed-stale-alert" className="alarm bg-fuchsia-600 text-black font-black text-xl px-4 py-3">
+            FEED STALE — last tick {age(feed.tick_age_seconds)}. Exit advice is suppressed.
+            Verify prices in your broker app before acting.
+          </div>
+        )
       )}
       {/* LOUD and STATIC. Motion on this page means STALE_DATA or FORCE_EXIT on a
           position you are holding; an expired credential is not that, and animating it

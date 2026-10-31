@@ -21,7 +21,6 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Literal
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -218,8 +217,10 @@ def create_app(runtime: SessionRuntime, *, run_loop: bool = True) -> FastAPI:
         return runtime.market_overview()
 
     @app.get("/market/{symbol}")
-    async def market_chart(symbol: str, interval: Literal[1, 5, 15] = 1) -> dict:
+    async def market_chart(symbol: str, interval: int = 1) -> dict:
         """Completed candles and potential structure for one subscribed symbol."""
+        if interval not in {1, 5, 15}:
+            raise HTTPException(422, "interval must be 1, 5 or 15 minutes")
         try:
             return runtime.market_chart(symbol, interval)
         except KeyError as exc:
