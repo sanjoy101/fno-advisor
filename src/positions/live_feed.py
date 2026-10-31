@@ -46,6 +46,7 @@ from src.market.calendar import (
     is_muhurat_session,
     is_trading_day,
     now_ist,
+    previous_trading_day,
     session_close,
     session_open,
 )
@@ -409,11 +410,20 @@ class FyersLiveFeed:
             same boundary defines ``expected_minutes``, so the two cannot disagree.
         """
         now = ensure_ist(self.clock())
-        trade_date = trade_date or now.date()
-        expected = expected_completed_minutes(trade_date, now)
+        session_date = trade_date or now.date()
+        market_note = market_state_note(session_date, now)
+        seed_date = session_date
+        expected = expected_completed_minutes(session_date, now)
+        if expected == 0:
+            # Fyers rejects history requests for weekends, holidays, and a trading
+            # day before its first completed minute. Seed from the last completed
+            # exchange session instead of sending an invalid same-day request.
+            seed_date = previous_trading_day(session_date)
+            expected = expected_completed_minutes(seed_date, now)
+            market_note += f"; warm-up uses previous trading session {seed_date}"
         report = SeedReport(
-            trade_date=trade_date, asof=now, expected_minutes=expected,
-            market_note=market_state_note(trade_date, now),
+            trade_date=seed_date, asof=now, expected_minutes=expected,
+            market_note=market_note,
         )
         loaded: dict[str, int] = {}
         client = self._history_client()
@@ -421,12 +431,12 @@ class FyersLiveFeed:
         for symbol in self.symbols:
             self._pace()
             try:
-                candles = client.fetch(symbol, trade_date, trade_date)
+                candles = client.fetch(symbol, seed_date, seed_date)
             except Exception as exc:  # noqa: BLE001 - surfaced, not swallowed
                 log.error(
                     "seed API_ERROR symbol=%s range=%s..%s asof=%s expected_minutes=%d "
                     "error=%s: %s",
-                    symbol, trade_date, trade_date, now.isoformat(), expected,
+                    symbol, seed_date, seed_date, now.isoformat(), expected,
                     type(exc).__name__, exc,
                 )
                 report.record(SymbolSeed(symbol, 0, SeedOutcome.API_ERROR,
@@ -446,14 +456,14 @@ class FyersLiveFeed:
                 ))
                 log.info(
                     "seeded symbol=%s range=%s..%s candles=%d complete=%d",
-                    symbol, trade_date, trade_date, len(candles), len(fresh),
+                    symbol, seed_date, seed_date, len(candles), len(fresh),
                 )
             elif expected == 0:
                 report.record(SymbolSeed(
                     symbol, 0, SeedOutcome.MARKET_CLOSED, report.market_note))
                 log.info(
                     "seed MARKET_CLOSED symbol=%s range=%s..%s asof=%s candles=%d -- %s",
-                    symbol, trade_date, trade_date, now.isoformat(), len(candles),
+                    symbol, seed_date, seed_date, now.isoformat(), len(candles),
                     report.market_note,
                 )
             else:
@@ -466,7 +476,7 @@ class FyersLiveFeed:
                 log.error(
                     "seed NO_DATA_IN_SESSION symbol=%s range=%s..%s asof=%s "
                     "expected_minutes=%d candles=%d -- %s",
-                    symbol, trade_date, trade_date, now.isoformat(), expected,
+                    symbol, seed_date, seed_date, now.isoformat(), expected,
                     len(candles), report.market_note,
                 )
 

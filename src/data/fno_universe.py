@@ -24,6 +24,12 @@ log = logging.getLogger("fno.universe")
 
 FYERS_NSE_FO_MASTER = "https://public.fyers.in/sym_details/NSE_FO.csv"
 INDEX_SYMBOLS = ("NIFTY", "BANKNIFTY")
+# NSE_FO includes options on indices alongside stock options. Only NIFTY and
+# BANKNIFTY have explicit index-symbol mappings in this app; keep the other index
+# underlyings out of the stock scanner rather than requesting them as ``-EQ``.
+NON_EQUITY_UNDERLYINGS = frozenset({
+    "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50", "NIFTYFPI",
+})
 MINIMUM_STOCKS_IN_MASTER = 50
 MAXIMUM_STOCKS_IN_MASTER = 250
 UNIVERSE_FILENAME = "fno_universe.json"
@@ -111,6 +117,8 @@ def parse_fyers_fo_master(raw: bytes, *, as_of: date) -> tuple[tuple[str, ...], 
             continue
         if symbol in INDEX_SYMBOLS:
             indices.add(symbol)
+        elif symbol in NON_EQUITY_UNDERLYINGS:
+            continue
         elif symbol.replace("&", "").replace("-", "").isalnum():
             stocks.add(symbol)
 
@@ -176,6 +184,7 @@ def load_snapshot(data_root: Path | str, *, today: date | None = None,
         today = today or now_ist().date()
         age = (today - as_of).days
         symbols = tuple(sorted({str(s).strip().upper() for s in raw["symbols"] if str(s).strip()}))
+        symbols = tuple(s for s in symbols if s not in NON_EQUITY_UNDERLYINGS)
         indices = tuple(s for s in INDEX_SYMBOLS if s in set(raw.get("indices", [])))
         if age < 0 or age > max_age_days or len(symbols) < MINIMUM_STOCKS_IN_MASTER:
             return None
