@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-from src.market.calendar import ensure_ist, now_ist
+from src.market.calendar import IST, ensure_ist, now_ist
 
 log = logging.getLogger("fno.universe")
 
@@ -52,6 +52,17 @@ class UniverseSnapshot:
 
 def _expiry(value: str) -> date | None:
     value = (value or "").strip()
+    # FYERS currently publishes this field as an epoch timestamp in seconds,
+    # despite documenting it as a date string. Resolve it in IST so contracts
+    # expiring near UTC midnight retain their exchange calendar date.
+    try:
+        epoch = float(value)
+        if epoch >= 100_000_000:
+            if epoch >= 100_000_000_000:  # tolerate millisecond epoch variants
+                epoch /= 1000
+            return datetime.fromtimestamp(epoch, tz=IST).date()
+    except (ValueError, OverflowError, OSError):
+        pass
     for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d-%b-%Y", "%d%b%Y", "%Y%m%d"):
         try:
             return datetime.strptime(value, fmt).date()
