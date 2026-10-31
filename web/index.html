@@ -38,8 +38,8 @@
   /* A quieter trading-terminal frame around the existing, safety-first desk. */
   body { background: #070b12; color: #e8eef7; }
   .desk-grid { background-image: linear-gradient(rgba(148,163,184,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,.025) 1px, transparent 1px); background-size: 36px 36px; }
-  .desk-nav a { color: #93a4ba; transition: color .15s ease, background .15s ease; }
-  .desk-nav a:hover, .desk-nav a:focus-visible { color: #e8eef7; background: rgba(148,163,184,.1); outline: none; }
+  .desk-nav button { color: #93a4ba; transition: color .15s ease, background .15s ease; }
+  .desk-nav button:hover, .desk-nav button:focus-visible { color: #e8eef7; background: rgba(148,163,184,.1); outline: none; }
   .desk-card { background: linear-gradient(145deg, rgba(17,26,40,.96), rgba(11,17,28,.96)); border-color: rgba(100,116,139,.28); box-shadow: 0 12px 32px rgba(0,0,0,.16); }
   @media (max-width: 720px) { .desk-nav { width: 100%; overflow-x: auto; } }
   /* OrderBlock-inspired visual language: near-black canvas, emerald data accents,
@@ -61,15 +61,16 @@
     box-shadow: 0 8px 30px rgba(0,0,0,.3);
     backdrop-filter: blur(16px);
   }
-  header[data-testid="ops-header"] a[href="#top"] > span:first-child {
+  header[data-testid="ops-header"] button:first-child > span:first-child {
     background: linear-gradient(145deg, #37f3b0, #00b978) !important;
     box-shadow: 0 0 22px rgba(25,230,162,.24);
   }
-  .desk-nav a { color: #9aa9a4; }
-  .desk-nav a:hover, .desk-nav a:focus-visible {
+  .desk-nav button { color: #9aa9a4; }
+  .desk-nav button:hover, .desk-nav button:focus-visible {
     color: #d8fff0;
     background: rgba(25,230,162,.09);
   }
+  .desk-nav button[aria-current="page"] { color: #b9ffe8; background: rgba(25,230,162,.12); }
   .desk-card {
     background: linear-gradient(145deg, rgba(12,19,20,.97), rgba(7,11,13,.97));
     border-color: rgba(25,230,162,.17);
@@ -95,15 +96,15 @@
     background: linear-gradient(120deg, #8b5cf6, #7044df) !important;
     color: #fff !important;
   }
-  #overview .desk-card { position: relative; overflow: hidden; }
-  #overview .desk-card::after {
+  #market-overview .desk-card { position: relative; overflow: hidden; }
+  #market-overview .desk-card::after {
     content: ""; position: absolute; inset: 0 auto auto 0; width: 100%; height: 1px;
     background: linear-gradient(90deg, transparent, rgba(25,230,162,.48), transparent);
     pointer-events: none;
   }
-  #overview [id="scanner"] > div { box-shadow: 0 0 34px rgba(0,0,0,.16); }
-  #overview [id="charts"] .desk-card { box-shadow: 0 0 42px rgba(0,190,128,.055), 0 16px 42px rgba(0,0,0,.35); }
-  #overview input:focus { --tw-ring-color: rgba(25,230,162,.65) !important; }
+  #market-scanner [id="rankings"] > div { box-shadow: 0 0 34px rgba(0,0,0,.16); }
+  #market-structure [id="charts"] .desk-card { box-shadow: 0 0 42px rgba(0,190,128,.055), 0 16px 42px rgba(0,0,0,.35); }
+  #market-scanner input:focus { --tw-ring-color: rgba(25,230,162,.65) !important; }
   @media (max-width: 720px) {
     .desk-grid { background-size: auto, auto, 32px 32px, 32px 32px; }
     header[data-testid="ops-header"] > div { gap: .45rem .65rem; }
@@ -234,7 +235,25 @@ function Why({ id, label = "Why?", children }) {
 
 /* ---------------------------------------------------------------- header */
 
-function Header({ health, connected }) {
+const APP_PAGES = [
+  { id: "overview", label: "Overview", title: "Market overview", description: "Breadth, sector flow, and broad market context." },
+  { id: "scanner", label: "Scanner", title: "Intraday scanner", description: "Transparent price and volume observations across the subscribed F&O universe." },
+  { id: "structure", label: "Structure", title: "Price structure", description: "Completed-candle charts, mechanical zones, and retest status." },
+  { id: "positions", label: "Positions", title: "Position tracker", description: "Record manual fills and review position exit context." },
+  { id: "journal", label: "Journal", title: "Trading journal", description: "Record plans and fills, then review outcomes by setup and habit." },
+  { id: "playbook", label: "Playbook", title: "Terminal playbook", description: "Read the workflow and calculate user-entered risk and R:R." },
+  { id: "checks", label: "Symbol checks", title: "Symbol checks", description: "Review individual and universe-wide entry checks and their history." },
+  { id: "event-risk", label: "Event risk", title: "Event risk context", description: "Review the event-risk feed and its data freshness." },
+];
+
+function pageFromHash() {
+  const value = location.hash.replace(/^#\/?/, "").split("?")[0];
+  if (APP_PAGES.some((page) => page.id === value)) return value;
+  const legacy = { rankings: "scanner", charts: "structure", checks: "checks", top: "overview" };
+  return legacy[value] || "overview";
+}
+
+function Header({ health, connected, activePage, onNavigate }) {
   const h = health || {};
   const feed = h.feed || {};
   /* THREE states, not two. With no health payload the mode is UNKNOWN -- never LIVE.
@@ -279,19 +298,12 @@ function Header({ health, connected }) {
       : mode === "LIVE" ? "border-emerald-500 bg-slate-950"
       : "border-slate-500 bg-slate-900"}`}>
       <div className="px-4 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-2.5">
-        <a href="#top" className="flex items-center gap-2.5 pr-3 no-underline text-slate-100">
+        <button type="button" onClick={() => onNavigate("overview")} className="flex items-center gap-2.5 pr-3 text-left text-slate-100">
           <span className="grid place-items-center w-9 h-9 rounded-lg bg-sky-400 text-slate-950 font-black">F</span>
           <span className="leading-tight"><span className="block text-sm font-black tracking-wide">FNO DESK</span><span className="block text-[10px] uppercase tracking-[.18em] text-slate-400">Position intelligence</span></span>
-        </a>
-        <nav className="desk-nav flex items-center gap-1 text-sm font-semibold" aria-label="Dashboard sections">
-          <a href="#overview" className="rounded-md px-3 py-2">Overview</a>
-          <a href="#rankings" className="rounded-md px-3 py-2">Scanner</a>
-          <a href="#charts" className="rounded-md px-3 py-2">Structure</a>
-          <a href="#positions" className="rounded-md px-3 py-2">Positions</a>
-          <a href="#journal" className="rounded-md px-3 py-2">Journal</a>
-          <a href="#playbook" className="rounded-md px-3 py-2">Playbook</a>
-          <a href="#checks" className="rounded-md px-3 py-2">Symbol checks</a>
-          <a href="#event-risk" className="rounded-md px-3 py-2">Event risk</a>
+        </button>
+        <nav className="desk-nav flex flex-wrap items-center gap-1 text-sm font-semibold" aria-label="Main pages">
+          {APP_PAGES.map((page) => <button key={page.id} type="button" onClick={() => onNavigate(page.id)} aria-current={activePage === page.id ? "page" : undefined} className={`rounded-md px-3 py-2 ${activePage === page.id ? "bg-emerald-400/15 text-emerald-200 ring-1 ring-emerald-500/40" : "text-slate-300 hover:bg-slate-800 hover:text-white"}`}>{page.label}</button>)}
         </nav>
         <div data-testid="mode-banner"
              className={`px-3.5 py-1.5 rounded font-black text-lg tracking-widest ${modeStyle}`}>
@@ -1518,8 +1530,7 @@ function RankedBoard({ title, rows, tone, onSelect, emptyText }) {
   return <Panel title={title}>{rows.length ? <ol className="space-y-2">{rows.map((r) => <li key={r.symbol}><button type="button" onClick={() => onSelect(r.symbol)} className="w-full rounded-lg border border-slate-800 bg-slate-950/60 p-3 text-left transition hover:border-emerald-500/50 hover:bg-slate-900"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><span className="w-7 text-xs font-bold text-slate-500">#{r.rank}</span><b className="text-base text-slate-100">{r.symbol}</b><span className={`tabnum text-xs font-bold ${tone}`}>{signed(r.scanner.change_pct)}%</span></div><div className="flex gap-3 text-xs"><span className="text-slate-400">score <b className="tabnum text-slate-100">{num(r.scanner.score, 4)}</b></span><span className="text-slate-400">vol <b className="tabnum text-amber-200">{num(r.scanner.volume_ratio)}×</b></span><span className="text-slate-400">eff <b className="tabnum text-slate-200">{num(r.scanner.efficiency * 100, 0)}%</b></span></div></div><div className="mt-2 grid gap-x-4 gap-y-1 text-[11px] text-slate-500 sm:grid-cols-2"><span>Sector: {r.sector || "UNKNOWN"} · latest ₹{num(r.last_price)}</span><span>Session VWAP: {r.scanner.vwap == null ? "unavailable" : `₹${num(r.scanner.vwap)} · ${Number(r.last_price) >= Number(r.scanner.vwap) ? "above" : "below"}`}</span><span>Zones: {(r.structure.potential_zones || []).map((z) => `${z.direction} ${z.status} ₹${num(z.low)}–₹${num(z.high)} · ${z.retests} retest(s)`).join(" · ") || "none identified"}</span><span>Swing highs: {(r.structure.swing_highs || []).map((p) => `₹${num(p.price)}`).join(" · ") || "none"}</span><span>Swing lows: {(r.structure.swing_lows || []).map((p) => `₹${num(p.price)}`).join(" · ") || "none"}</span><span>Equal-high references: {(r.structure.equal_highs || []).map((p) => `₹${num(p.price)} · ${p.status}`).join(" · ") || "none"}</span><span>Equal-low references: {(r.structure.equal_lows || []).map((p) => `₹${num(p.price)} · ${p.status}`).join(" · ") || "none"}</span></div><div className="mt-2 text-right text-[10px] font-bold text-emerald-300">Open completed-candle chart →</div></button></li>)}</ol> : <p className="py-6 text-sm text-slate-500">{emptyText}</p>}</Panel>;
 }
 
-function MarketPanel({ market }) {
-  const [selected, setSelected] = useState(null);
+function MarketPanel({ market, page, selected, setSelected }) {
   const [chartPopup, setChartPopup] = useState(false);
   const [symbolQuery, setSymbolQuery] = useState("");
   const [sectorFilter, setSectorFilter] = useState("ALL");
@@ -1560,10 +1571,11 @@ function MarketPanel({ market }) {
   }, [market && market.asof, alerts]);
   useEffect(() => {
     if (!selected && market) {
-      const preferred = indexRows.find((r) => r.symbol === "NIFTY") || indexRows[0];
-      setSelected(preferred ? preferred.symbol : (rows[0] && rows[0].symbol) || null);
+      const preferred = market.scanner?.bullish?.[0]?.symbol || market.scanner?.bearish?.[0]?.symbol || rows[0]?.symbol || indexRows[0]?.symbol;
+      if (preferred) setSelected(preferred);
     }
-  }, [market, selected]);
+  }, [market, selected, rows, indexRows, setSelected]);
+  useEffect(() => { setChartPopup(false); }, [page]);
   const SymbolRows = ({ items, tone, showAll, onToggle }) => {
     const shown = showAll ? items : items.slice(0, 8);
     return <>
@@ -1574,11 +1586,12 @@ function MarketPanel({ market }) {
   const directoryRows = filteredRows;
 
   return (
-    <section id="overview" className="scroll-mt-36 space-y-4" aria-label="Market overview and scanner">
+    <section id={`market-${page}`} className="space-y-4" aria-label={`${page} market workspace`}>
+      {unavailable ? <div role="status" className="rounded-xl desk-card ring-1 p-5 text-slate-400">Waiting for the first market snapshot. Coverage is limited to symbols subscribed in this session.</div> : <>
+      {!marketActive && <div role="status" className="rounded-xl border border-amber-500/25 bg-amber-500/[.06] px-4 py-3 text-sm text-amber-100">Market closed · showing the last available session as historical context. Live readings resume during NSE market hours.</div>}
+      {page === "overview" && <>
       <div className="flex flex-wrap items-end justify-between gap-3"><div><div className="text-xs uppercase tracking-[.2em] text-sky-300 font-bold">Observed market</div><h2 className="mt-1 text-2xl font-black">Market X-Ray</h2><p className="text-sm text-slate-400">Completed candles · descriptive breadth, not a prediction</p></div>
         {market && <div className="text-right text-xs text-slate-500">{marketActive ? `${market.coverage.fresh}/${market.coverage.subscribed} symbols current` : `${observations.length}/${market.coverage.subscribed} symbols with prior-session bars`} · as of {hhmmss(market.asof)}</div>}</div>
-      {unavailable ? <div role="status" className="rounded-xl desk-card ring-1 p-5 text-slate-400">Waiting for the first market snapshot. Coverage is limited to symbols subscribed in this session.</div> : <>
-        {!marketActive && <div role="status" className="rounded-xl border border-amber-500/25 bg-amber-500/[.06] px-4 py-3 text-sm text-amber-100">Market closed · showing the last available session as historical context. Live readings resume during NSE market hours.</div>}
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
           <div className="rounded-xl desk-card ring-1 ring-slate-700 p-4"><div className="text-xs uppercase tracking-widest text-slate-400">{marketActive ? "Up from first bar" : "Last session · up"}</div><div className="mt-1 text-3xl font-black text-emerald-300 tabnum">{marketActive ? market.breadth.up_from_baseline : up.length}</div></div>
           <div className="rounded-xl desk-card ring-1 ring-slate-700 p-4"><div className="text-xs uppercase tracking-widest text-slate-400">{marketActive ? "Down from first bar" : "Last session · down"}</div><div className="mt-1 text-3xl font-black text-rose-300 tabnum">{marketActive ? market.breadth.down_from_baseline : down.length}</div></div>
@@ -1587,18 +1600,24 @@ function MarketPanel({ market }) {
           <div className="col-span-2 lg:col-span-1 rounded-xl border border-slate-700 bg-slate-950/60 p-4"><div className="text-xs uppercase tracking-widest text-slate-400">Index context</div>{indexRows.length ? indexRows.map((r) => <div key={r.symbol} className="mt-2 flex items-center justify-between gap-2"><div><div className="text-xs font-bold text-slate-400">{r.symbol}</div><div className="tabnum font-black text-slate-100">{r.last_price == null ? "—" : `₹${num(r.last_price)}`}</div></div><span className={`tabnum text-sm font-bold ${r.stale && marketActive ? "text-amber-300" : Number(r.change_from_baseline_pct) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{r.stale && marketActive ? "STALE" : r.change_from_baseline_pct == null ? (marketActive ? "NO BARS" : "NO DATA") : `${signed(r.change_from_baseline_pct)}%`}</span></div>) : <div className="mt-2 font-bold text-slate-300">NIFTY · BANK NIFTY</div>}<div className="mt-1 text-xs text-slate-500">{indexRows.length ? (marketActive ? "Index prices from first available bar" : "Previous-session index context") : "Not subscribed to this feed"}</div></div>
         </div>
         <MarketBreadthMap rows={observations} rankedSymbols={rankedSymbols} onSelect={(s) => { setSelected(s); setChartPopup(true); }}/>
+        <Panel title="Sector flow"><p className="mb-3 text-xs text-slate-500">{market.sectors_are_historical ? "Average movement and member participation from the last available session." : "Average movement and member participation among fresh subscribed symbols."} Sector averages describe this subscribed set; unknown mappings stay visible.</p>{sectorMoves.length > 0 && <div className="mb-3 grid gap-2 sm:grid-cols-2"><div className="rounded-lg border border-emerald-800/60 bg-emerald-950/20 p-3"><div className="text-[10px] uppercase text-slate-500">Leading observed sector</div><b className="text-emerald-200">{sectorMoves[0].sector}</b><span className="ml-2 tabnum text-sm text-emerald-300">{signed(sectorMoves[0].average_change_pct)}% average</span></div><div className="rounded-lg border border-rose-800/60 bg-rose-950/20 p-3"><div className="text-[10px] uppercase text-slate-500">Lagging observed sector</div><b className="text-rose-200">{sectorMoves[sectorMoves.length - 1].sector}</b><span className="ml-2 tabnum text-sm text-rose-300">{signed(sectorMoves[sectorMoves.length - 1].average_change_pct)}% average</span></div></div>}<div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{(market.sectors || []).map((s) => <div key={s.sector} className="rounded-lg bg-slate-950/60 p-3"><div className="flex flex-wrap items-center justify-between gap-1"><span className="font-semibold text-slate-300">{s.sector}</span><span className="tabnum text-xs text-slate-400">avg {s.average_change_pct == null ? "—" : `${signed(s.average_change_pct)}%`} · <b className="text-emerald-300">{s.up}↑</b> / <b className="text-rose-300">{s.down}↓</b> · {s.flat} flat</span></div><div className="mt-2 flex max-h-16 flex-wrap gap-1 overflow-auto">{(s.members || []).map((m) => <button key={m.symbol} type="button" title={`${m.symbol} · ${m.change_pct == null ? "no data" : `${signed(m.change_pct)}%`}`} onClick={() => { setSelected(m.symbol); setChartPopup(true); }} className={`rounded px-1.5 py-0.5 text-[10px] ring-1 ${m.state === "UP_FROM_BASELINE" ? "bg-emerald-950/50 text-emerald-200 ring-emerald-900" : m.state === "DOWN_FROM_BASELINE" ? "bg-rose-950/50 text-rose-200 ring-rose-900" : "bg-slate-900 text-slate-400 ring-slate-800"}`}>{m.symbol}</button>)}</div></div>)}</div></Panel>
+        </>}
+      {page === "scanner" && <>
         <section id="rankings" className="scroll-mt-36 space-y-3" aria-label="Intraday price and volume ranking board"><div className="flex flex-wrap items-end justify-between gap-2"><div><div className="text-xs uppercase tracking-[.18em] text-emerald-300 font-bold">Observed activity · {scanner ? scanner.eligible_count : 0} eligible · {scanner ? scanner.choppy_count : 0} choppy filtered · {scanner ? scanner.not_ready_count : 0} warming up</div><h2 className="mt-1 text-xl font-black">Intraday strength board</h2><p className="text-xs text-slate-500">Top 20 in each direction, ranked by the same disclosed price/volume formula. {marketActive ? "Current-session observations." : "Last-session observations; historical context."}</p></div><span className="rounded-full border border-amber-700/50 bg-amber-950/30 px-3 py-1 text-xs font-bold text-amber-200">OI unavailable · excluded</span></div><div className="grid gap-3 lg:grid-cols-2"><RankedBoard title="Bullish · strongest observed" rows={rankedRows(scanner && scanner.bullish, "UP")} tone="text-emerald-300" onSelect={(s) => { setSelected(s); setChartPopup(true); }} emptyText="No eligible bullish observations yet. More completed bars may be needed to calculate the volume comparison."/><RankedBoard title="Bearish · strongest observed" rows={rankedRows(scanner && scanner.bearish, "DOWN")} tone="text-rose-300" onSelect={(s) => { setSelected(s); setChartPopup(true); }} emptyText="No eligible bearish observations yet. More completed bars may be needed to calculate the volume comparison."/></div><details className="rounded-lg border border-slate-800 bg-slate-950/50 p-3"><summary className="cursor-pointer text-xs font-bold text-slate-300">How the ranking works and what these levels mean</summary><p className="mt-2 text-xs leading-relaxed text-slate-400">{scanner && scanner.formula} {scanner && scanner.limitations} {scanner && scanner.mechanical_levels} No projected S1/R1/R2, entry calls, or verified institutional-order claims are generated.</p></details></section>
         {marketActive && (market.coverage.stale > 0 || market.coverage.without_bars > 0) && <div role="status" className="rounded-lg border border-amber-700/60 bg-amber-950/30 px-4 py-3 text-sm text-amber-100">Some symbols have stale data or no completed bars. They are excluded from current breadth.</div>}
         <div id="scanner" className="grid gap-4 lg:grid-cols-2 scroll-mt-36">
           <Panel title={marketActive ? "Observed up from first available bar" : "Up during the last session"}><p className="mb-2 text-xs text-slate-500">Alphabetical · completed-bar movement · descriptive only</p><SymbolRows items={up} tone="text-emerald-300" showAll={showAllUp} onToggle={() => setShowAllUp(!showAllUp)}/></Panel>
           <Panel title={marketActive ? "Observed down from first available bar" : "Down during the last session"}><p className="mb-2 text-xs text-slate-500">Alphabetical · completed-bar movement · descriptive only</p><SymbolRows items={down} tone="text-rose-300" showAll={showAllDown} onToggle={() => setShowAllDown(!showAllDown)}/></Panel>
         </div>
-        <Panel title="Live price-structure alerts"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-slate-400">New completed-bar patterns from this session · no order-book/OI data</p><button type="button" onClick={async () => { if (!("Notification" in window)) return; if (Notification.permission !== "granted") await Notification.requestPermission(); }} className="rounded-md px-3 py-1.5 text-xs font-bold text-emerald-200 ring-1 ring-emerald-700">Enable desktop alerts</button></div><p className="mt-2 text-[11px] text-slate-500">{market.alerts_disclaimer}</p>{alerts.length ? <div className="mt-3 max-h-64 divide-y divide-slate-800 overflow-auto">{alerts.map((a) => <button type="button" key={a.id} onClick={() => { setSelected(a.symbol); setChartPopup(true); }} className="flex w-full flex-wrap items-center justify-between gap-2 py-2 text-left hover:bg-white/[.025]"><span><b className="text-emerald-200">{a.symbol}</b><span className="ml-2 text-sm text-slate-200">{a.title}</span><span className="block text-xs text-slate-500">{a.detail}</span></span><span className="tabnum text-xs text-slate-500">{hhmmss(a.at)} · {a.price != null ? `₹${num(a.price)}` : `₹${num(a.low)}–₹${num(a.high)}`}</span></button>)}</div> : <p className="mt-3 text-sm text-slate-500">No new patterns yet. Alerts begin after the first live scan baseline and only update when completed candles arrive.</p>}</Panel>
         <Panel title="Scanner filters"><div className="grid gap-3 sm:grid-cols-3"><label className="text-xs text-slate-400">SYMBOL SEARCH<input aria-label="Filter symbols" value={symbolQuery} onChange={(e) => setSymbolQuery(e.target.value)} placeholder="e.g. RELIANCE" className="mt-1 w-full rounded-lg bg-slate-900 px-3 py-2 text-sm text-slate-100 ring-1 ring-slate-700"/></label><label className="text-xs text-slate-400">SECTOR<select value={sectorFilter} onChange={(e) => setSectorFilter(e.target.value)} className="mt-1 w-full rounded-lg bg-slate-900 px-3 py-2 text-sm text-slate-100 ring-1 ring-slate-700"><option value="ALL">All sectors</option>{sectors.map((s) => <option key={s}>{s}</option>)}</select></label><label className="text-xs text-slate-400">OBSERVATION<select value={movementFilter} onChange={(e) => setMovementFilter(e.target.value)} className="mt-1 w-full rounded-lg bg-slate-900 px-3 py-2 text-sm text-slate-100 ring-1 ring-slate-700"><option value="ALL">All observations</option><option value="UP">Up from baseline</option><option value="DOWN">Down from baseline</option><option value="FLAT">At baseline</option><option value="STALE">Stale data</option><option value="NO_DATA">No completed bars</option></select></label></div><p className="mt-2 text-xs text-slate-500">{filteredRows.length} of {rows.length} subscribed stocks match. Select any row in the directory to open its chart.</p></Panel>
-        <Panel title="Sector flow"><p className="mb-3 text-xs text-slate-500">{market.sectors_are_historical ? "Average movement and member participation from the last available session." : "Average movement and member participation among fresh subscribed symbols."} Sector averages describe this subscribed set; unknown mappings stay visible.</p>{sectorMoves.length > 0 && <div className="mb-3 grid gap-2 sm:grid-cols-2"><div className="rounded-lg border border-emerald-800/60 bg-emerald-950/20 p-3"><div className="text-[10px] uppercase text-slate-500">Leading observed sector</div><b className="text-emerald-200">{sectorMoves[0].sector}</b><span className="ml-2 tabnum text-sm text-emerald-300">{signed(sectorMoves[0].average_change_pct)}% average</span></div><div className="rounded-lg border border-rose-800/60 bg-rose-950/20 p-3"><div className="text-[10px] uppercase text-slate-500">Lagging observed sector</div><b className="text-rose-200">{sectorMoves[sectorMoves.length - 1].sector}</b><span className="ml-2 tabnum text-sm text-rose-300">{signed(sectorMoves[sectorMoves.length - 1].average_change_pct)}% average</span></div></div>}<div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{(market.sectors || []).map((s) => <div key={s.sector} className="rounded-lg bg-slate-950/60 p-3"><div className="flex flex-wrap items-center justify-between gap-1"><span className="font-semibold text-slate-300">{s.sector}</span><span className="tabnum text-xs text-slate-400">avg {s.average_change_pct == null ? "—" : `${signed(s.average_change_pct)}%`} · <b className="text-emerald-300">{s.up}↑</b> / <b className="text-rose-300">{s.down}↓</b> · {s.flat} flat</span></div><div className="mt-2 flex max-h-16 flex-wrap gap-1 overflow-auto">{(s.members || []).map((m) => <button key={m.symbol} type="button" title={`${m.symbol} · ${m.change_pct == null ? "no data" : `${signed(m.change_pct)}%`}`} onClick={() => { setSelected(m.symbol); setChartPopup(true); }} className={`rounded px-1.5 py-0.5 text-[10px] ring-1 ${m.state === "UP_FROM_BASELINE" ? "bg-emerald-950/50 text-emerald-200 ring-emerald-900" : m.state === "DOWN_FROM_BASELINE" ? "bg-rose-950/50 text-rose-200 ring-rose-900" : "bg-slate-900 text-slate-400 ring-slate-800"}`}>{m.symbol}</button>)}</div></div>)}</div></Panel>
-        {selected && !chartPopup && <div id="charts" className="scroll-mt-36"><div className="mb-2 flex items-center justify-between"><div><h2 className="text-xl font-black">Structure workspace</h2><p className="text-xs text-slate-500">Candles, mechanical zones, and confirmed swing levels</p></div><span className="rounded-full bg-sky-400/10 px-3 py-1 text-xs font-bold text-sky-200">{selected}</span></div><MarketChart symbol={selected} market={market}/></div>}
         <Panel title={`F&O symbol directory · ${filteredRows.length} matches`}><div className="flex flex-wrap items-end justify-between gap-3"><p className="text-sm text-slate-400">Directory uses the scanner filters above. Symbols are alphabetical.</p><button type="button" onClick={() => setShowDirectory(!showDirectory)} className="rounded-lg px-3 py-2 text-xs font-bold text-sky-200 ring-1 ring-slate-700 hover:bg-slate-800">{showDirectory ? "Hide list" : "Browse all matches"}</button></div>{showDirectory && <div className="mt-4 max-h-[520px] overflow-auto rounded-lg border border-slate-800"><div className="grid gap-x-4 px-3 sm:grid-cols-2 xl:grid-cols-3">{directoryRows.map((r) => <button key={r.symbol} type="button" onClick={() => { setSelected(r.symbol); setChartPopup(true); }} className="flex items-center justify-between border-b border-slate-800 py-2 text-left hover:bg-white/[.025]"><span><b>{r.symbol}</b><span className={`ml-2 text-[10px] ${r.stale || r.state === "NO_DATA" ? "text-amber-300" : "text-slate-500"}`}>{!marketActive && r.bars ? "LAST SESSION" : r.stale ? "STALE" : r.state === "NO_DATA" ? "NO BARS" : "CURRENT"}</span></span><span className="tabnum text-xs text-slate-400">{r.change_from_baseline_pct == null ? "—" : `${signed(r.change_from_baseline_pct)}%`} →</span></button>)}</div>{directoryRows.length === 0 && <p className="p-4 text-sm text-slate-500">No symbols match the selected filters.</p>}</div>}</Panel>
         <p className="rounded-lg border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs leading-relaxed text-slate-500">Universe: {market.coverage.universe.state === "FULL_CURRENT_MASTER" ? `full dated F&O master (${market.coverage.universe.master_symbols} stocks), as of ${market.coverage.universe.as_of}` : market.coverage.universe.state === "MAINTAINED_LIQUID_SUBSET" ? "maintained liquid F&O subset; run refresh-universe for the current full list" : market.coverage.universe.state === "MASTER_STALE_OR_INVALID" ? "saved F&O master is stale or invalid; using the subscribed set" : "custom subscribed symbol set"}. The board orders completed-bar price and volume observations by its disclosed formula. It does not forecast returns or recommend trades.</p>
+        </>}
+      {page === "structure" && <>
+        <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-2xl font-black">Structure workspace</h2><p className="text-sm text-slate-400">Select a subscribed symbol to inspect completed candles and mechanical levels.</p></div><label className="text-xs uppercase tracking-wider text-slate-400">Symbol<select value={selected || ""} onChange={(e) => setSelected(e.target.value)} className="mt-1 min-w-52 rounded-lg bg-slate-900 px-3 py-2 text-sm text-slate-100 ring-1 ring-slate-700">{[...indexRows, ...rows].map((r) => <option key={r.symbol} value={r.symbol}>{r.symbol}</option>)}</select></label></div>
+        <Panel title="Live price-structure alerts"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-slate-400">New completed-bar patterns from this session · no order-book/OI data</p><button type="button" onClick={async () => { if (!("Notification" in window)) return; if (Notification.permission !== "granted") await Notification.requestPermission(); }} className="rounded-md px-3 py-1.5 text-xs font-bold text-emerald-200 ring-1 ring-emerald-700">Enable desktop alerts</button></div><p className="mt-2 text-[11px] text-slate-500">{market.alerts_disclaimer}</p>{alerts.length ? <div className="mt-3 max-h-64 divide-y divide-slate-800 overflow-auto">{alerts.map((a) => <button type="button" key={a.id} onClick={() => { setSelected(a.symbol); setChartPopup(true); }} className="flex w-full flex-wrap items-center justify-between gap-2 py-2 text-left hover:bg-white/[.025]"><span><b className="text-emerald-200">{a.symbol}</b><span className="ml-2 text-sm text-slate-200">{a.title}</span><span className="block text-xs text-slate-500">{a.detail}</span></span><span className="tabnum text-xs text-slate-500">{hhmmss(a.at)} · {a.price != null ? `₹${num(a.price)}` : `₹${num(a.low)}–₹${num(a.high)}`}</span></button>)}</div> : <p className="mt-3 text-sm text-slate-500">No new patterns yet. Alerts begin after the first live scan baseline and only update when completed candles arrive.</p>}</Panel>
+        {selected && <div id="charts"><MarketChart symbol={selected} market={market}/></div>}
+      </>}
       </>}
       {chartPopup && selected && <div role="dialog" aria-modal="true" aria-label={`${selected} completed-candle chart`} className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 p-2 backdrop-blur-sm sm:p-5"><div className="my-2 w-full max-w-6xl rounded-xl border border-slate-700 bg-[#080d15] p-2 shadow-2xl sm:my-4 sm:p-4"><div className="mb-2 flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-widest text-emerald-300">Symbol analysis · {selected}</span><button type="button" autoFocus onClick={() => setChartPopup(false)} className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-bold text-slate-100 ring-1 ring-slate-600">Close chart ✕</button></div><MarketChart symbol={selected} market={market}/></div></div>}
     </section>
@@ -1791,8 +1810,27 @@ function App() {
   const [snap, setSnap] = useState(null);
   const [connected, setConnected] = useState(false);
   const [fetchError, setFetchError] = useState(null);
+  const [activePage, setActivePage] = useState(pageFromHash);
+  const [selectedSymbol, setSelectedSymbol] = useState(null);
   const wsRef = useRef(null);
   const retry = useRef(0);
+
+  const navigate = useCallback((page) => {
+    const next = APP_PAGES.some((item) => item.id === page) ? page : "overview";
+    if (location.hash !== `#/${next}`) history.pushState(null, "", `#/${next}`);
+    setActivePage(next);
+    window.scrollTo(0, 0);
+  }, []);
+
+  useEffect(() => {
+    const syncPage = () => setActivePage(pageFromHash());
+    window.addEventListener("popstate", syncPage);
+    window.addEventListener("hashchange", syncPage);
+    return () => {
+      window.removeEventListener("popstate", syncPage);
+      window.removeEventListener("hashchange", syncPage);
+    };
+  }, []);
 
   const connect = useCallback(() => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -1846,117 +1884,36 @@ function App() {
      duplicating the fetch. One implementation, one set of guarantees. */
   const runAllRef = useRef(null);
 
+  const pageMeta = APP_PAGES.find((page) => page.id === activePage) || APP_PAGES[0];
+  const healthStartedAt = snap?.health?.started_at;
   return (
     <div id="top" className="min-h-full desk-grid">
-      <Header health={snap && snap.health} connected={connected} />
-      {fetchError && (
-        <div data-testid="fetch-error"
-             className="alarm bg-red-700 text-white font-bold px-4 py-3 text-lg">
-          Cannot reach the server: {fetchError}. Nothing on this page is current.
-        </div>
-      )}
-      <main className="max-w-[1680px] mx-auto p-4 sm:p-6 space-y-5">
+      <Header health={snap && snap.health} connected={connected} activePage={activePage} onNavigate={navigate} />
+      {fetchError && <div data-testid="fetch-error" className="alarm bg-red-700 px-4 py-3 text-lg font-bold text-white">Cannot reach the server: {fetchError}. Nothing on this page is current.</div>}
+      <main className="mx-auto max-w-[1680px] space-y-5 p-4 sm:p-6">
         <section className="flex flex-wrap items-end justify-between gap-4 py-2">
-          <div>
-            <div className="text-xs uppercase tracking-[.22em] text-sky-300 font-bold">Your market workspace</div>
-            <h1 className="market-title mt-1 text-3xl sm:text-4xl font-black tracking-tight">F&amp;O Market Desk</h1>
-            <p className="mt-1 text-sm sm:text-base text-slate-400">Scan the market, inspect price structure, and manage your tracked positions.</p>
-          </div>
-          <div className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-950/80 px-3 py-1.5 text-xs font-semibold text-slate-300">
-            <span className={`inline-block w-2 h-2 rounded-full ${connected ? "bg-emerald-400" : "bg-amber-400"}`}></span>
-            {connected ? "Streaming updates" : "Reconnecting to updates"}
-          </div>
+          <div><div className="text-xs font-bold uppercase tracking-[.22em] text-sky-300">F&amp;O Market Desk</div><h1 className="market-title mt-1 text-3xl font-black tracking-tight sm:text-4xl">{pageMeta.title}</h1><p className="mt-1 text-sm text-slate-400 sm:text-base">{pageMeta.description}</p></div>
+          <div className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-950/80 px-3 py-1.5 text-xs font-semibold text-slate-300"><span className={`inline-block h-2 w-2 rounded-full ${connected ? "bg-emerald-400" : "bg-amber-400"}`}></span>{connected ? "Streaming updates" : "Reconnecting to updates"}</div>
         </section>
-        <MarketPanel market={snap && snap.market} />
-        <Playbook />
-        {/* B. Health summary. Four operational facts, above everything, always. */}
-        <HealthRow health={snap && snap.health} positions={positions} />
 
-        <div className="grid grid-cols-1 xl:grid-cols-[1fr_400px] gap-4 items-start">
-        {/* C/D. The wide column: positions own it when there are any, and the empty
-            state offers the two things there are to do when there are none. */}
-        <div id="positions" className="space-y-4 scroll-mt-36">
-          {empty ? (
-            <>
-              <section data-testid="no-positions"
-                   className="rounded-lg bg-slate-900/70 ring-1 ring-slate-700 px-5 py-5">
-                <h2 className="text-lg font-bold text-slate-200">No open positions</h2>
-                <p className="mt-1 text-[15px] text-slate-400 leading-relaxed">
-                  Nothing is being tracked, so there is no exit advice to give. Two
-                  things you can do from here — neither of them places an order, and
-                  no order is ever placed by this tool.
-                </p>
-                <div className="mt-4 flex flex-wrap gap-3">
-                  <button type="button" onClick={() => runAllRef.current && runAllRef.current()}
-                    className="px-4 py-2.5 rounded bg-slate-700 hover:bg-slate-600
-                               font-semibold text-[15px] focus:outline-none
-                               focus:ring-2 focus:ring-sky-400">
-                    Check tracked symbols
-                  </button>
-                  <button type="button" onClick={() => {
-                      const f = document.querySelector('[data-testid="add-position-form"]');
-                      if (f) { f.scrollIntoView({ block: "center" });
-                               const i = f.querySelector("input"); if (i) i.focus(); }
-                    }}
-                    className="px-4 py-2.5 rounded bg-slate-700 hover:bg-slate-600
-                               font-semibold text-[15px] focus:outline-none
-                               focus:ring-2 focus:ring-sky-400">
-                    Record a manually executed position
-                  </button>
-                </div>
-              </section>
-              <div id="checks" className="space-y-4 scroll-mt-36"><CheckAllPanel prominent onReady={(fn) => (runAllRef.current = fn)} />
-              <CheckedLogPanel startedAt={snap && snap.health && snap.health.started_at} /></div>
-            </>
-          ) : (
-            <>
-              <div className="flex items-baseline gap-3">
-                <h1 className="text-base font-bold uppercase tracking-widest text-slate-300">
-                  Open positions
-                </h1>
-                <span className="text-[15px] text-slate-400">{sorted.length}</span>
-              </div>
-              {sorted.map((p) => (
-                <PositionCard key={p.position_id} p={p} onClose={closePosition} />
-              ))}
-              <div id="checks" className="space-y-4 scroll-mt-36"><CheckAllPanel onReady={(fn) => (runAllRef.current = fn)} />
-              <CheckedLogPanel startedAt={snap && snap.health && snap.health.started_at} /></div>
-            </>
-          )}
-          <JournalPanel positions={snap?.positions || []} />
-        </div>
+        {activePage === "overview" && <><MarketPanel market={snap && snap.market} page="overview" selected={selectedSymbol} setSelected={setSelectedSymbol}/><HealthRow health={snap && snap.health} positions={positions}/></>}
+        {activePage === "scanner" && <MarketPanel market={snap && snap.market} page="scanner" selected={selectedSymbol} setSelected={setSelectedSymbol}/>}
+        {activePage === "structure" && <MarketPanel market={snap && snap.market} page="structure" selected={selectedSymbol} setSelected={setSelectedSymbol}/>}
 
-        <div className="space-y-4">
-          <CheckEntryPanel />
-          <AddPositionForm onAdded={refresh} />
-          <div id="event-risk" className="scroll-mt-36"><EventRiskPanel er={snap && snap.event_risk} /></div>
-          {/* data-disclaimer marks safety prose that necessarily NAMES what it
-              disclaims. The page-wide "no recommendation wording" scan removes these
-              before checking, because otherwise the guard flags its own safety text --
-              the trap every substring scan in this project has hit. */}
-          <div data-disclaimer
-               className="rounded-lg bg-slate-900/60 ring-1 ring-slate-700 p-5">
-            <h2 className="text-base font-bold uppercase tracking-widest text-slate-300">
-              Advisory only
-            </h2>
-            <p className="mt-2 text-[15px] leading-relaxed text-slate-300">
-              This system never places, modifies or cancels an order.
-            </p>
-            <Why id="why-advisory" label="Why there is no signal panel">
-              <p>
-                Every exit is executed by you, manually, in your broker app. No broker
-                order endpoint is reachable from this process.
-              </p>
-              <p>
-                There is no signal panel. The ranking engine was evaluated at intraday,
-                1-day, 3-day and 5-day horizons and produced no edge over a naive
-                comparator at any of them, so showing its scores here would present a
-                known-negative result as a recommendation.
-              </p>
-            </Why>
+        {activePage === "positions" && <>
+          <HealthRow health={snap && snap.health} positions={positions}/>
+          <div className="grid items-start gap-4 xl:grid-cols-[1fr_400px]">
+            <section id="positions" className="space-y-4" aria-label="Open positions">
+              {empty ? <div data-testid="no-positions" className="rounded-lg bg-slate-900/70 px-5 py-5 ring-1 ring-slate-700"><h2 className="text-lg font-bold text-slate-200">No open positions</h2><p className="mt-1 leading-relaxed text-slate-400">There are no manually recorded open positions.</p><button type="button" onClick={() => navigate("checks")} className="mt-4 rounded bg-slate-700 px-4 py-2.5 font-semibold hover:bg-slate-600">Go to symbol checks</button></div> : <><div className="flex items-baseline gap-3"><h2 className="text-base font-bold uppercase tracking-widest text-slate-300">Open positions</h2><span className="text-slate-400">{sorted.length}</span></div>{sorted.map((p) => <PositionCard key={p.position_id} p={p} onClose={closePosition}/>)}</>}
+            </section>
+            <div className="space-y-4"><AddPositionForm onAdded={refresh}/><div data-disclaimer className="rounded-lg bg-slate-900/60 p-5 ring-1 ring-slate-700"><h2 className="text-base font-bold uppercase tracking-widest text-slate-300">Advisory only</h2><p className="mt-2 leading-relaxed text-slate-300">This system never places, modifies, or cancels an order. Every position action is manual in your broker app.</p></div></div>
           </div>
-        </div>
-        </div>
+        </>}
+
+        {activePage === "journal" && <JournalPanel positions={positions}/>}
+        {activePage === "playbook" && <Playbook/>}
+        {activePage === "checks" && <div className="grid items-start gap-4 xl:grid-cols-2"><div className="space-y-4"><CheckEntryPanel/><CheckAllPanel prominent onReady={(fn) => (runAllRef.current = fn)}/></div><CheckedLogPanel startedAt={healthStartedAt}/></div>}
+        {activePage === "event-risk" && <EventRiskPanel er={snap && snap.event_risk}/>}
       </main>
     </div>
   );
