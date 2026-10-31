@@ -214,6 +214,7 @@ class SessionRuntime:
         self._last_payload: dict[str, Any] = {}
         self._last_advice_logged: dict[str, tuple[str, str]] = {}
         self._market_structure_last_bar: dict[str, datetime] = {}
+        self._market_structure_cache: dict[str, tuple[datetime, dict[str, Any]]] = {}
         self._market_alert_seen_ids: set[str] = set()
         self._market_alerts: list[dict[str, Any]] = []
         self._market_alerts_initialized = False
@@ -896,12 +897,16 @@ class SessionRuntime:
     def market_overview(self) -> dict:
         """Observed movement and breadth for this runtime's subscribed symbols.
 
-        This is intentionally separate from Module B: it carries no score, rank,
-        candidate or forecast. Every row is alphabetic and reports completed-bar
-        movement against that session's first bar. The subscriber set is also the
-        data-coverage boundary; missing indices and symbols are reported as such.
+        The alphabetic observation rows remain separate from Module B. The optional
+        scanner sub-object is a transparent descriptive ordering of completed-bar
+        movement and recent volume; it is not an entry signal or return forecast.
+        Missing symbols and indices stay visible in the coverage boundary.
+
+        Data-availability boundary:
+            Uses only completed bars returned by the runtime feed at ``now()``.
+            No forming candle, future candle, or same-day delayed OI is used.
         """
-        from src.market.structure import INDEX_SYMBOLS, market_observation, sector_breadth
+        from src.market.structure import INDEX_SYMBOLS, market_observation, scanner_observation, sector_breadth
         from src.signals.universe import SECTORS
         from src.positions.exit_engine import feed_staleness
         from src.data.backfill import LIQUID_FNO_UNIVERSE
@@ -909,8 +914,10 @@ class SessionRuntime:
 
         now = self.now()
         rows, index_rows = [], []
+        bars_by_symbol: dict[str, list] = {}
         for symbol in sorted(self.symbols):
             bars = self.feed.bars(symbol)
+            bars_by_symbol[symbol] = bars
             last = self.feed.last_tick_at(symbol)
             stale, age = feed_staleness(now, last, self.engine_cfg)
             row = market_observation(
@@ -919,6 +926,7 @@ class SessionRuntime:
             )
             row["data_age_seconds"] = None if age is None else round(age, 1)
             row["sector"] = "INDEX" if symbol in INDEX_SYMBOLS else SECTORS.get(symbol, "UNKNOWN")
+            row["scanner"] = scanner_observation(bars) if symbol not in INDEX_SYMBOLS else None
             (index_rows if symbol in INDEX_SYMBOLS else rows).append(row)
 
         # Evaluate structure only when a new completed candle arrives. Seed existing
@@ -931,6 +939,31 @@ class SessionRuntime:
         flat = sum(r["state"] == "AT_BASELINE" for r in fresh)
         session_state = _session_state(now)
         market_active = session_state in {"OPEN", "SQUARE-OFF WINDOW"}
+        scan_rows = [r for r in rows if r["scanner"] and r["scanner"]["eligible"]
+                     and r["scanner"]["direction"] and (not market_active or not r["stale"])]
+        def ranked(direction: str) -> list[dict]:
+            leaders = sorted((r for r in scan_rows if r["scanner"]["direction"] == direction),
+                             key=lambda r: (-r["scanner"]["score"], r["symbol"]))[:20]
+            result = []
+            for rank, row in enumerate(leaders, 1):
+                structure = self._market_structure_for(row["symbol"], bars_by_symbol[row["symbol"]])
+                result.append({**row, "rank": rank, "structure": {
+                    "potential_zones": structure.get("order_blocks", [])[-3:],
+                    "swing_highs": structure.get("swing_highs", [])[-3:],
+                    "swing_lows": structure.get("swing_lows", [])[-3:],
+                    "equal_highs": structure.get("equal_highs", []),
+                    "equal_lows": structure.get("equal_lows", []),
+                }})
+            return result
+        scanner = {"bullish": ranked("BULLISH"), "bearish": ranked("BEARISH"),
+            "eligible_count": len(scan_rows), "universe_count": len(rows),
+            "choppy_count": sum(r["scanner"] and r["scanner"]["reason"] == "CHOPPY_PATH" for r in rows),
+            "not_ready_count": sum(not r["scanner"] or r["scanner"]["reason"] in
+                                    {"NEED_MORE_BARS", "VOLUME_BASELINE_UNAVAILABLE"} for r in rows),
+            "asof": now.isoformat(), "is_ranking": True,
+            "formula": "Score = |first available bar open to latest completed close (%)| × min(recent volume ratio, 5) × path efficiency. Recent volume ratio compares average volume in the latest 5 completed bars with the average in up to the preceding 15 bars. Path efficiency below 0.20 is marked choppy and excluded.",
+            "limitations": "Descriptive ranking only; no forecast or trade recommendation. OI is unavailable in the intraday candle feed and is excluded. Volume ratio is an intraday recent-versus-prior comparison, not a historical time-of-day norm. Ranks use fresh data during market hours; closed-session rows are historical context.",
+            "mechanical_levels": "Potential zones, confirmed swing pivots and equal-price references are computed from completed candles. They do not identify verified institutional orders or project stop/target prices."}
         sector_rows = fresh if market_active else [r for r in rows if r["state"] != "NO_DATA"]
         universe_snapshot = load_snapshot(self.store.root)
         subscribed_stocks = {r["symbol"] for r in rows}
@@ -961,6 +994,7 @@ class SessionRuntime:
                         "symbols": index_rows,
                         "detail": "Index data is shown only when those indices are subscribed and fresh."},
             "symbols": rows,
+            "scanner": scanner,
             "alerts": alerts,
             "alerts_disclaimer": "Completed-candle price patterns only. Equal highs/lows are price references, not verified resting orders; no order book or open-interest data is used.",
             "ordering": "alphabetical",
@@ -970,8 +1004,13 @@ class SessionRuntime:
         }
 
     def _update_market_alerts(self, rows: list[dict]) -> list[dict]:
-        from src.market.structure import market_structure
+        """Add newly observed patterns from completed bars during active live hours.
 
+        Data-availability boundary:
+            Each symbol is evaluated from ``feed.bars(symbol)`` through its latest
+            completed bar. Historical patterns seed deduplication on first scan and
+            are not emitted as new alerts.
+        """
         active = _session_state(self.now()) in {"OPEN", "SQUARE-OFF WINDOW"}
         if not active:
             return list(self._market_alerts)
@@ -983,7 +1022,7 @@ class SessionRuntime:
             last_time = bars[-1].close_time
             if self._market_structure_last_bar.get(symbol) == last_time:
                 continue
-            structure = market_structure(bars)
+            structure = self._market_structure_for(symbol, bars)
             self._market_structure_last_bar[symbol] = last_time
             candidates = []
             for z in structure.get("order_blocks", []):
@@ -1009,6 +1048,26 @@ class SessionRuntime:
         self._market_alerts_initialized = True
         self._market_alerts = self._market_alerts[:40]
         return list(self._market_alerts)
+
+    def _market_structure_for(self, symbol: str, bars) -> dict:
+        """Cache structure from the supplied completed-bar history.
+
+        Data-availability boundary:
+            Uses only the supplied completed bars through the latest bar's close time;
+            a forming candle and any later bar are excluded by the caller.
+        """
+        from src.market.structure import market_structure
+        if not bars:
+            return {"state": "INSUFFICIENT_BARS", "order_blocks": [], "swing_highs": [],
+                    "swing_lows": [], "equal_highs": [], "equal_lows": []}
+        last_time = bars[-1].close_time
+        cached = self._market_structure_cache.get(symbol)
+        if cached and cached[0] == last_time:
+            return cached[1]
+        structure = market_structure(bars)
+        self._market_structure_cache[symbol] = (last_time, structure)
+        self._market_structure_last_bar[symbol] = last_time
+        return structure
 
     def market_chart(self, symbol: str, interval: int = 1) -> dict:
         """Completed OHLCV bars and potential structure for one subscribed symbol."""

@@ -8,6 +8,7 @@ completed bars (``completed_bars`` is the shared data-availability boundary).
 from __future__ import annotations
 
 from collections import defaultdict
+from statistics import fmean
 from typing import Sequence
 
 from src.market.calendar import ensure_ist
@@ -15,7 +16,8 @@ from src.positions.models import BAR_INTERVAL, Bar
 
 INDEX_SYMBOLS = frozenset({"NIFTY", "BANKNIFTY"})
 
-__all__ = ["INDEX_SYMBOLS", "market_observation", "market_structure", "resample_bars", "sector_breadth"]
+__all__ = ["INDEX_SYMBOLS", "market_observation", "market_structure", "resample_bars",
+           "scanner_observation", "sector_breadth"]
 
 
 def resample_bars(bars: Sequence[Bar], minutes: int, asof) -> list[Bar]:
@@ -175,6 +177,47 @@ def market_observation(symbol: str, bars: Sequence[Bar], *, stale: bool,
         "session_high": max(b.high for b in bars), "session_low": min(b.low for b in bars),
         "volume": volume, "bars": len(bars),
     }
+
+
+def scanner_observation(bars: Sequence[Bar], *, choppy_efficiency: float = 0.20) -> dict:
+    """Describe completed-bar direction, path efficiency, and recent volume activity.
+
+    Data-availability boundary:
+        Uses only the supplied completed bars, in chronological order. Price change
+        is measured from the first available bar's open to the latest close. Recent
+        volume is the mean of the latest five bars versus the mean of up to the prior
+        fifteen bars. At least five bars are required in each volume window. This is
+        an intraday comparison, not a multi-day or time-of-day-normalized baseline.
+    """
+    if len(bars) < 10:
+        return {"eligible": False, "reason": "NEED_MORE_BARS", "score": None,
+                "direction": None, "volume_ratio": None, "efficiency": None}
+    recent = bars[-5:]
+    prior = bars[max(0, len(bars) - 20):-5]
+    if len(prior) < 5 or fmean(b.volume for b in prior) <= 0:
+        return {"eligible": False, "reason": "VOLUME_BASELINE_UNAVAILABLE", "score": None,
+                "direction": None, "volume_ratio": None, "efficiency": None}
+    volume_ratio = fmean(b.volume for b in recent) / fmean(b.volume for b in prior)
+    first, last = bars[0], bars[-1]
+    net = last.close - first.open
+    path = abs(first.close - first.open) + sum(
+        abs(right.close - left.close) for left, right in zip(bars, bars[1:])
+    )
+    efficiency = min(1.0, abs(net) / path) if path > 0 else 0.0
+    change_pct = net / first.open * 100 if first.open else 0.0
+    direction = "BULLISH" if net > 0 else "BEARISH" if net < 0 else None
+    if direction is None:
+        return {"eligible": False, "reason": "NO_DIRECTIONAL_CHANGE", "score": 0.0,
+                "direction": None, "volume_ratio": round(volume_ratio, 2),
+                "efficiency": round(efficiency, 3), "change_pct": round(change_pct, 3)}
+    if efficiency < choppy_efficiency:
+        return {"eligible": False, "reason": "CHOPPY_PATH", "score": 0.0,
+                "direction": direction, "volume_ratio": round(volume_ratio, 2),
+                "efficiency": round(efficiency, 3), "change_pct": round(change_pct, 3)}
+    score = abs(change_pct) * min(volume_ratio, 5.0) * efficiency
+    return {"eligible": True, "reason": None, "score": round(score, 4),
+            "direction": direction, "volume_ratio": round(volume_ratio, 2),
+            "efficiency": round(efficiency, 3), "change_pct": round(change_pct, 3)}
 
 
 def sector_breadth(rows: Sequence[dict], sectors: dict[str, str]) -> list[dict]:

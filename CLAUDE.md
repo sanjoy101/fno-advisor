@@ -919,20 +919,31 @@ guardrails are structural rather than cultural:
 Note the panel prose necessarily contains the word "ranking" (in "filter, not a
 ranking"), so banned-substring scans must be scoped to the table, not the panel.
 
-**There is no signals endpoint and no signal panel, and this is not an omission.**
+**There is no Module B signals endpoint or signal panel, and this is not an omission.**
 Module B's features produced no excess over a naive comparator at ~16-minute, 1-day,
 3-day and 5-day horizons (§2.3). A scored ranking in the UI would present a
 known-negative result as a recommendation — the one failure mode that costs real
-money. The UI says so on the page, in prose, where the panel would have been. **If a
-future session is tempted to add one, the finding must be overturned on the holdout
-first, not worked around in the frontend.**
+money. The UI says so on the page, in prose, where the panel would have been. **Any
+Module B signal panel still requires the finding to be overturned on holdout first.**
 
-The descriptive `/market` view is separate from Module B: it reports completed-bar
-movement from the earliest bar available, breadth for fresh subscribed stock symbols,
-and separate NIFTY/BANKNIFTY context when subscribed. `/market/{symbol}` draws candles
-and mechanical potential zones from completed bars; it carries no score or forecast.
-Default stock coverage remains the maintained 21-name liquid subset, not the full NSE
-F&O universe. The index instruments are context only and are excluded from entry checks.
+**Owner-approved descriptive scanner (2026-10-31).** A separate market-workspace board
+may order up to 20 bullish and 20 bearish observations by a disclosed completed-bar
+price/volume formula. This is a descriptive terminal view, not Module B, not an entry
+signal, and not a claim of predictive edge. Its current formula uses first-available
+bar price change, recent-versus-prior intraday volume, and path efficiency; choppy rows
+are excluded by a fixed displayed rule. Intraday OI is unavailable and must not be
+invented or substituted with delayed daily OI. Mechanical zones, confirmed pivots, and
+equal-price references may be shown, but do not label them institutional orders or
+derive projected S1/R1/R2 advice. Keep the board isolated from entry checks, outcome
+logs, and position advice. The user explicitly selected this limited scope.
+
+The descriptive `/market` view is separate from Module B: alphabetical rows report
+completed-bar movement, breadth covers fresh subscribed stock symbols, and indices are
+separate context. Its owner-approved scanner sub-object has the limited descriptive
+price/volume score above; it does not forecast. `/market/{symbol}` draws candles and
+mechanical potential zones from completed bars. Default stock coverage remains the
+maintained 21-name liquid subset, not the full NSE F&O universe. The index instruments
+are context only and are excluded from entry checks.
 
 **REPLAY is the default mode; LIVE must be asked for.** `Mode` is REPLAY or LIVE and
 `SessionRuntime.now()` is the *only* mode-dependent read in the whole runtime —

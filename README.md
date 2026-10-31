@@ -80,8 +80,12 @@ same line. Nothing it prints is an order instruction, and no order is placed.
 **Cost rates remain unverified**, so every feasibility figure is provisional and `READY`
 is unreachable until `COST_RATES_VERIFIED=true`. Not yet wired to the dashboard or API.
 
-The dashboard now includes a descriptive market view, completed-candle structure
-charts, NIFTY/BANKNIFTY context, and a decision journal linked to manual positions.
+The dashboard includes a transparent, descriptive intraday price/volume board (up to
+20 symbols per direction), completed-candle structure charts, NIFTY/BANKNIFTY context,
+sector breadth, a price-structure alert feed, and a decision journal with a net-P&L
+calendar. The board uses completed bars only; it excludes OI because the intraday candle
+feed does not provide it. Its mechanical zones and pivots are price references, not
+verified institutional orders, trade recommendations, or projected stop/target levels.
 Run `python -m src.cli refresh-universe` to download, validate, and save the dated
 FYERS NSE F&O symbol master. Default LIVE scans use that snapshot while it is no more
 than seven days old, otherwise they fall back to the maintained 21-name liquid subset
