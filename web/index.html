@@ -1388,7 +1388,34 @@ function Input({ label, ...rest }) {
   );
 }
 
-function MarketChart({ symbol }) {
+function ContextChecklist({ market, symbol }) {
+  if (!market) return null;
+  const stock = (market.symbols || []).find((r) => r.symbol === symbol);
+  const direction = stock?.scanner?.direction;
+  if (!stock || !direction) return null;
+  const side = direction === "BULLISH" ? "bullish" : "bearish";
+  const board = (market.scanner && market.scanner[side]) || [];
+  const sector = (market.sectors || []).find((s) => s.sector === stock.sector);
+  const up = Number(market.breadth?.up_from_baseline || 0);
+  const down = Number(market.breadth?.down_from_baseline || 0);
+  const vwap = stock.scanner.vwap;
+  const price = stock.last_price;
+  const checks = [
+    { label: `Stock is on the ${side} board`, value: board.some((r) => r.symbol === symbol) },
+    { label: "Sector average moves the same way", value: sector?.average_change_pct == null ? null : direction === "BULLISH" ? sector.average_change_pct > 0 : sector.average_change_pct < 0 },
+    { label: "Market breadth leans the same way", value: market.breadth?.sample ? direction === "BULLISH" ? up > down : down > up : null },
+    { label: "Price is on the same side of estimated VWAP", value: vwap == null || price == null ? null : direction === "BULLISH" ? price >= vwap : price <= vwap },
+  ];
+  const available = checks.filter((c) => c.value !== null).length;
+  const aligned = checks.filter((c) => c.value === true).length;
+  return <Panel title={`Context checklist · ${direction.toLowerCase()} observation`}>
+    <div className="mb-2 text-xs text-slate-500">{aligned}/{available} available comparisons align. Descriptive context only; no trade signal or sizing instruction.{market.sectors_are_historical ? " Last-session context." : ""}</div>
+    <ul className="grid gap-2 sm:grid-cols-2">{checks.map((c) => <li key={c.label} className="flex items-center gap-2 rounded-lg bg-slate-950/60 p-2 text-xs"><span className={c.value === null ? "text-slate-500" : c.value ? "text-emerald-300" : "text-amber-300"}>{c.value === null ? "—" : c.value ? "✓" : "·"}</span><span className="text-slate-300">{c.label}</span></li>)}</ul>
+    <div className="mt-2 text-[10px] text-slate-500">A comparison can be unavailable when the sector, breadth sample, VWAP, or scanner observation is missing.</div>
+  </Panel>;
+}
+
+function MarketChart({ symbol, market }) {
   const [chart, setChart] = useState(null);
   const [error, setError] = useState(null);
   const [interval, setInterval] = useState(5);
@@ -1420,6 +1447,13 @@ function MarketChart({ symbol }) {
   const vwapSeries = allVwap.slice(offset);
   const values = candles.flatMap((b) => [b.low, b.high]).concat(vwapSeries.filter((v) => v != null));
   const structure = interval === 5 ? (chart.structure || {}) : {};
+  const activeZone = (chart.structure?.order_blocks || []).filter((z) => z.status !== "INVALIDATED").slice(-1)[0];
+  const currentPrice = candles[candles.length - 1]?.close;
+  const zoneDistance = activeZone && currentPrice != null
+    ? currentPrice > activeZone.high ? { text: `${((currentPrice - activeZone.high) / currentPrice * 100).toFixed(2)}% above zone`, tone: "text-amber-200" }
+      : currentPrice < activeZone.low ? { text: `${((activeZone.low - currentPrice) / currentPrice * 100).toFixed(2)}% below zone`, tone: "text-sky-200" }
+      : { text: "inside zone", tone: "text-emerald-300" }
+    : null;
   const latest = allCandles[allCandles.length - 1];
   const periodHigh = candles.length ? Math.max(...candles.map((b) => b.high)) : null;
   const periodLow = candles.length ? Math.min(...candles.map((b) => b.low)) : null;
@@ -1458,8 +1492,10 @@ function MarketChart({ symbol }) {
         </svg>
       </div>
       <div className="mt-2 text-xs text-purple-300">Dashed violet line: estimated session VWAP from typical candle price × volume.</div>
+      <div className="mt-1 text-[10px] text-slate-500">Zone-candle volume ratio compares the source five-minute candle with the average of up to 20 preceding five-minute candles. It is not volume-at-price, order-book depth, or proof of large-player activity.</div>
+      {market && <div className="mt-3"><ContextChecklist market={market} symbol={symbol}/></div>}
       <div className="mt-3 grid gap-3 sm:grid-cols-3 text-sm">
-        <div className="rounded-lg bg-slate-950/60 p-3"><div className="font-bold text-slate-200">Mechanical zones · 5-minute closes</div><div className="mt-1 text-slate-400">{interval !== 5 ? "Switch to the 5-minute view to see zones and structure levels." : zones.length ? zones.map((z) => `${z.direction} ${num(z.low)}–${num(z.high)} · ${z.status} · ${z.retests} retest(s)${z.volume_ratio_at_zone == null ? "" : ` · zone vol ${num(z.volume_ratio_at_zone)}×`}`).join(" · ") : "No pattern met the displayed mechanical rule."}</div></div>
+        <div className="rounded-lg bg-slate-950/60 p-3"><div className="font-bold text-slate-200">Mechanical zones · 5-minute closes</div><div className="mt-1 text-slate-400">{interval !== 5 ? "Switch to the 5-minute view to see zones and structure levels." : zones.length ? zones.map((z) => `${z.direction} ${num(z.low)}–${num(z.high)} · midpoint ₹${num((z.low + z.high) / 2)} · invalidation boundary ₹${num(z.direction === "BULLISH" ? z.low : z.high)} · ${z.status} · ${z.retests} retest(s)${z.first_retest_at ? ` · first retest ${hhmmss(z.first_retest_at)}` : ""}${z.volume_ratio_at_zone == null ? "" : ` · zone-candle volume ${num(z.volume_ratio_at_zone)}× prior candles`}`).join(" · ") : "No pattern met the displayed mechanical rule."}{interval === 5 && zoneDistance && <div className={`mt-1 font-bold ${zoneDistance.tone}`}>Latest close {zoneDistance.text}{chart.stale ? " · historical/stale" : ""}</div>}</div></div>
         <div className="rounded-lg bg-slate-950/60 p-3"><div className="font-bold text-slate-200">Swing highs · unbroken price references</div><div className="mt-1 text-slate-400">{levels.filter((l) => (structure.swing_highs || []).includes(l)).map((l) => num(l.price)).join(" · ") || "No confirmed pivots."}</div></div>
         <div className="rounded-lg bg-slate-950/60 p-3"><div className="font-bold text-slate-200">Swing lows · confirmed price references</div><div className="mt-1 text-slate-400">{(structure.swing_lows || []).slice(-5).map((l) => num(l.price)).join(" · ") || "No confirmed pivots."}</div></div>
       </div>
@@ -1560,11 +1596,11 @@ function MarketPanel({ market }) {
         <Panel title="Live price-structure alerts"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-slate-400">New completed-bar patterns from this session · no order-book/OI data</p><button type="button" onClick={async () => { if (!("Notification" in window)) return; if (Notification.permission !== "granted") await Notification.requestPermission(); }} className="rounded-md px-3 py-1.5 text-xs font-bold text-emerald-200 ring-1 ring-emerald-700">Enable desktop alerts</button></div><p className="mt-2 text-[11px] text-slate-500">{market.alerts_disclaimer}</p>{alerts.length ? <div className="mt-3 max-h-64 divide-y divide-slate-800 overflow-auto">{alerts.map((a) => <button type="button" key={a.id} onClick={() => { setSelected(a.symbol); setChartPopup(true); }} className="flex w-full flex-wrap items-center justify-between gap-2 py-2 text-left hover:bg-white/[.025]"><span><b className="text-emerald-200">{a.symbol}</b><span className="ml-2 text-sm text-slate-200">{a.title}</span><span className="block text-xs text-slate-500">{a.detail}</span></span><span className="tabnum text-xs text-slate-500">{hhmmss(a.at)} · {a.price != null ? `₹${num(a.price)}` : `₹${num(a.low)}–₹${num(a.high)}`}</span></button>)}</div> : <p className="mt-3 text-sm text-slate-500">No new patterns yet. Alerts begin after the first live scan baseline and only update when completed candles arrive.</p>}</Panel>
         <Panel title="Scanner filters"><div className="grid gap-3 sm:grid-cols-3"><label className="text-xs text-slate-400">SYMBOL SEARCH<input aria-label="Filter symbols" value={symbolQuery} onChange={(e) => setSymbolQuery(e.target.value)} placeholder="e.g. RELIANCE" className="mt-1 w-full rounded-lg bg-slate-900 px-3 py-2 text-sm text-slate-100 ring-1 ring-slate-700"/></label><label className="text-xs text-slate-400">SECTOR<select value={sectorFilter} onChange={(e) => setSectorFilter(e.target.value)} className="mt-1 w-full rounded-lg bg-slate-900 px-3 py-2 text-sm text-slate-100 ring-1 ring-slate-700"><option value="ALL">All sectors</option>{sectors.map((s) => <option key={s}>{s}</option>)}</select></label><label className="text-xs text-slate-400">OBSERVATION<select value={movementFilter} onChange={(e) => setMovementFilter(e.target.value)} className="mt-1 w-full rounded-lg bg-slate-900 px-3 py-2 text-sm text-slate-100 ring-1 ring-slate-700"><option value="ALL">All observations</option><option value="UP">Up from baseline</option><option value="DOWN">Down from baseline</option><option value="FLAT">At baseline</option><option value="STALE">Stale data</option><option value="NO_DATA">No completed bars</option></select></label></div><p className="mt-2 text-xs text-slate-500">{filteredRows.length} of {rows.length} subscribed stocks match. Select any row in the directory to open its chart.</p></Panel>
         <Panel title="Sector flow"><p className="mb-3 text-xs text-slate-500">{market.sectors_are_historical ? "Average movement and member participation from the last available session." : "Average movement and member participation among fresh subscribed symbols."} Sector averages describe this subscribed set; unknown mappings stay visible.</p>{sectorMoves.length > 0 && <div className="mb-3 grid gap-2 sm:grid-cols-2"><div className="rounded-lg border border-emerald-800/60 bg-emerald-950/20 p-3"><div className="text-[10px] uppercase text-slate-500">Leading observed sector</div><b className="text-emerald-200">{sectorMoves[0].sector}</b><span className="ml-2 tabnum text-sm text-emerald-300">{signed(sectorMoves[0].average_change_pct)}% average</span></div><div className="rounded-lg border border-rose-800/60 bg-rose-950/20 p-3"><div className="text-[10px] uppercase text-slate-500">Lagging observed sector</div><b className="text-rose-200">{sectorMoves[sectorMoves.length - 1].sector}</b><span className="ml-2 tabnum text-sm text-rose-300">{signed(sectorMoves[sectorMoves.length - 1].average_change_pct)}% average</span></div></div>}<div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{(market.sectors || []).map((s) => <div key={s.sector} className="rounded-lg bg-slate-950/60 p-3"><div className="flex flex-wrap items-center justify-between gap-1"><span className="font-semibold text-slate-300">{s.sector}</span><span className="tabnum text-xs text-slate-400">avg {s.average_change_pct == null ? "—" : `${signed(s.average_change_pct)}%`} · <b className="text-emerald-300">{s.up}↑</b> / <b className="text-rose-300">{s.down}↓</b> · {s.flat} flat</span></div><div className="mt-2 flex max-h-16 flex-wrap gap-1 overflow-auto">{(s.members || []).map((m) => <button key={m.symbol} type="button" title={`${m.symbol} · ${m.change_pct == null ? "no data" : `${signed(m.change_pct)}%`}`} onClick={() => { setSelected(m.symbol); setChartPopup(true); }} className={`rounded px-1.5 py-0.5 text-[10px] ring-1 ${m.state === "UP_FROM_BASELINE" ? "bg-emerald-950/50 text-emerald-200 ring-emerald-900" : m.state === "DOWN_FROM_BASELINE" ? "bg-rose-950/50 text-rose-200 ring-rose-900" : "bg-slate-900 text-slate-400 ring-slate-800"}`}>{m.symbol}</button>)}</div></div>)}</div></Panel>
-        {selected && !chartPopup && <div id="charts" className="scroll-mt-36"><div className="mb-2 flex items-center justify-between"><div><h2 className="text-xl font-black">Structure workspace</h2><p className="text-xs text-slate-500">Candles, mechanical zones, and confirmed swing levels</p></div><span className="rounded-full bg-sky-400/10 px-3 py-1 text-xs font-bold text-sky-200">{selected}</span></div><MarketChart symbol={selected}/></div>}
+        {selected && !chartPopup && <div id="charts" className="scroll-mt-36"><div className="mb-2 flex items-center justify-between"><div><h2 className="text-xl font-black">Structure workspace</h2><p className="text-xs text-slate-500">Candles, mechanical zones, and confirmed swing levels</p></div><span className="rounded-full bg-sky-400/10 px-3 py-1 text-xs font-bold text-sky-200">{selected}</span></div><MarketChart symbol={selected} market={market}/></div>}
         <Panel title={`F&O symbol directory · ${filteredRows.length} matches`}><div className="flex flex-wrap items-end justify-between gap-3"><p className="text-sm text-slate-400">Directory uses the scanner filters above. Symbols are alphabetical.</p><button type="button" onClick={() => setShowDirectory(!showDirectory)} className="rounded-lg px-3 py-2 text-xs font-bold text-sky-200 ring-1 ring-slate-700 hover:bg-slate-800">{showDirectory ? "Hide list" : "Browse all matches"}</button></div>{showDirectory && <div className="mt-4 max-h-[520px] overflow-auto rounded-lg border border-slate-800"><div className="grid gap-x-4 px-3 sm:grid-cols-2 xl:grid-cols-3">{directoryRows.map((r) => <button key={r.symbol} type="button" onClick={() => { setSelected(r.symbol); setChartPopup(true); }} className="flex items-center justify-between border-b border-slate-800 py-2 text-left hover:bg-white/[.025]"><span><b>{r.symbol}</b><span className={`ml-2 text-[10px] ${r.stale || r.state === "NO_DATA" ? "text-amber-300" : "text-slate-500"}`}>{!marketActive && r.bars ? "LAST SESSION" : r.stale ? "STALE" : r.state === "NO_DATA" ? "NO BARS" : "CURRENT"}</span></span><span className="tabnum text-xs text-slate-400">{r.change_from_baseline_pct == null ? "—" : `${signed(r.change_from_baseline_pct)}%`} →</span></button>)}</div>{directoryRows.length === 0 && <p className="p-4 text-sm text-slate-500">No symbols match the selected filters.</p>}</div>}</Panel>
         <p className="rounded-lg border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs leading-relaxed text-slate-500">Universe: {market.coverage.universe.state === "FULL_CURRENT_MASTER" ? `full dated F&O master (${market.coverage.universe.master_symbols} stocks), as of ${market.coverage.universe.as_of}` : market.coverage.universe.state === "MAINTAINED_LIQUID_SUBSET" ? "maintained liquid F&O subset; run refresh-universe for the current full list" : market.coverage.universe.state === "MASTER_STALE_OR_INVALID" ? "saved F&O master is stale or invalid; using the subscribed set" : "custom subscribed symbol set"}. The board orders completed-bar price and volume observations by its disclosed formula. It does not forecast returns or recommend trades.</p>
       </>}
-      {chartPopup && selected && <div role="dialog" aria-modal="true" aria-label={`${selected} completed-candle chart`} className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 p-2 backdrop-blur-sm sm:p-5"><div className="my-2 w-full max-w-6xl rounded-xl border border-slate-700 bg-[#080d15] p-2 shadow-2xl sm:my-4 sm:p-4"><div className="mb-2 flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-widest text-emerald-300">Symbol analysis · {selected}</span><button type="button" autoFocus onClick={() => setChartPopup(false)} className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-bold text-slate-100 ring-1 ring-slate-600">Close chart ✕</button></div><MarketChart symbol={selected}/></div></div>}
+      {chartPopup && selected && <div role="dialog" aria-modal="true" aria-label={`${selected} completed-candle chart`} className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/80 p-2 backdrop-blur-sm sm:p-5"><div className="my-2 w-full max-w-6xl rounded-xl border border-slate-700 bg-[#080d15] p-2 shadow-2xl sm:my-4 sm:p-4"><div className="mb-2 flex items-center justify-between"><span className="text-xs font-bold uppercase tracking-widest text-emerald-300">Symbol analysis · {selected}</span><button type="button" autoFocus onClick={() => setChartPopup(false)} className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-bold text-slate-100 ring-1 ring-slate-600">Close chart ✕</button></div><MarketChart symbol={selected} market={market}/></div></div>}
     </section>
   );
 }
@@ -1590,15 +1626,67 @@ function PnlHeatmap({ trades }) {
   return <Panel title="Net P&L calendar heatmap"><div className="mb-3 flex items-center justify-between gap-2"><button type="button" onClick={() => setOffset(offset - 1)} className="rounded-md px-3 py-1 text-xs font-bold ring-1 ring-slate-700">← Previous</button><b className="text-sm text-slate-200">{monthTitle}</b><button type="button" disabled={offset >= 0} onClick={() => setOffset(Math.min(0, offset + 1))} className="rounded-md px-3 py-1 text-xs font-bold ring-1 ring-slate-700 disabled:opacity-40">Next →</button></div><div className="grid grid-cols-7 gap-1 text-center">{["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => <div key={d} className="py-1 text-[10px] font-bold text-slate-500">{d}</div>)}{cells.map((day, i) => { if (!day) return <div key={`blank-${i}`} className="min-h-14 rounded-md bg-slate-950/30"/>; const key = `${monthKey}-${pad(day)}`, value = daily[key]; const intensity = value ? Math.abs(value.net) / maxAbsNet : 0; const tone = !value ? "bg-slate-950/40 text-slate-500" : value.net > 0 ? (intensity >= .66 ? "bg-emerald-500/40 text-emerald-100 ring-1 ring-emerald-700" : intensity >= .33 ? "bg-emerald-500/25 text-emerald-200 ring-1 ring-emerald-800/60" : "bg-emerald-500/10 text-emerald-200 ring-1 ring-emerald-950") : value.net < 0 ? (intensity >= .66 ? "bg-rose-500/40 text-rose-100 ring-1 ring-rose-700" : intensity >= .33 ? "bg-rose-500/25 text-rose-200 ring-1 ring-rose-800/60" : "bg-rose-500/10 text-rose-200 ring-1 ring-rose-950") : "bg-slate-800 text-slate-300"; return <div key={key} title={value ? `${key}: ${value.count} closed fill(s), net ${value.net.toFixed(2)}` : `${key}: no closed fills`} className={`min-h-14 rounded-md p-1 text-left ${tone}`}><div className="text-[10px] font-bold">{day}</div>{value && <><div className="mt-1 truncate text-[9px] font-bold">₹{num(value.net, 0)}</div><div className="text-[9px] opacity-70">{value.count} fill{value.count === 1 ? "" : "s"}</div></>}</div>; })}</div><div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-500"><span>Color intensity is relative within this month. Cells show closed-fill net P&amp;L by exit date (up to 300 recent journal fills); blank dates have no recorded closed fill.</span><span className="text-amber-300">Based on the configured cost model; provisional until verified against contract notes.</span></div></Panel>;
 }
 
+function RiskCalculator() {
+  const [side, setSide] = useState("BULLISH");
+  const [capital, setCapital] = useState("");
+  const [riskPct, setRiskPct] = useState("");
+  const [zonePrice, setZonePrice] = useState("");
+  const [invalidation, setInvalidation] = useState("");
+  const [target, setTarget] = useState("");
+  const [quantity, setQuantity] = useState("");
+  const [lotSize, setLotSize] = useState("");
+  const numOrNull = (v) => v === "" ? null : Number(v);
+  const cap = numOrNull(capital), pct = numOrNull(riskPct), entry = numOrNull(zonePrice);
+  const stop = numOrNull(invalidation), targetPrice = numOrNull(target);
+  const lot = numOrNull(lotSize), enteredQty = numOrNull(quantity);
+  const riskPerUnit = entry != null && stop != null
+    ? side === "BULLISH" ? entry - stop : stop - entry : null;
+  const validBudget = cap > 0 && pct > 0 && pct <= 100;
+  const validRisk = riskPerUnit > 0;
+  const budget = validBudget ? cap * pct / 100 : null;
+  const rawUnits = validBudget && validRisk ? Math.floor(budget / riskPerUnit) : null;
+  const maxUnits = rawUnits == null ? null : lot > 0 ? Math.floor(rawUnits / lot) * lot : rawUnits;
+  const usedUnits = enteredQty > 0 ? enteredQty : maxUnits;
+  const estimatedRisk = usedUnits != null && validRisk ? usedUnits * riskPerUnit : null;
+  const rewardPerUnit = entry != null && targetPrice != null
+    ? side === "BULLISH" ? targetPrice - entry : entry - targetPrice : null;
+  const rr = validRisk && rewardPerUnit > 0 ? rewardPerUnit / riskPerUnit : null;
+  const breakEven = rr == null ? null : 100 / (1 + rr);
+  const cash = (v) => v == null || !Number.isFinite(v) ? "—" : `₹${num(v, 2)}`;
+  return <Panel title="Manual position-size & R:R calculator">
+    <p className="mb-3 text-xs text-slate-400">Uses only values you enter. Set your own risk budget and invalidation level; the dashboard does not create stops, targets, or orders.</p>
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <label><span className="mb-1 block text-xs uppercase text-slate-400">side</span><select value={side} onChange={(e) => setSide(e.target.value)} className="w-full rounded bg-slate-800 px-3 py-2 text-sm ring-1 ring-slate-600"><option value="BULLISH">Bullish</option><option value="BEARISH">Bearish</option></select></label>
+      <Input label="capital · ₹" type="number" min="0" step="any" value={capital} onChange={(e) => setCapital(e.target.value)} />
+      <Input label="your risk limit · %" type="number" min="0" max="100" step="any" value={riskPct} onChange={(e) => setRiskPct(e.target.value)} />
+      <Input label="planned price / Z · ₹" type="number" min="0" step="any" value={zonePrice} onChange={(e) => setZonePrice(e.target.value)} />
+      <Input label="your invalidation · ₹" type="number" min="0" step="any" value={invalidation} onChange={(e) => setInvalidation(e.target.value)} />
+      <Input label="optional target reference · ₹" type="number" min="0" step="any" value={target} onChange={(e) => setTarget(e.target.value)} />
+      <Input label="quantity override · units" type="number" min="0" step="1" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
+      <Input label="optional lot size · units" type="number" min="0" step="1" value={lotSize} onChange={(e) => setLotSize(e.target.value)} />
+    </div>
+    <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="rounded-lg bg-slate-950/60 p-3"><div className="text-[10px] uppercase text-slate-500">Risk per unit</div><b className="tabnum">{validRisk ? cash(riskPerUnit) : "Enter a valid zone and invalidation"}</b></div>
+      <div className="rounded-lg bg-slate-950/60 p-3"><div className="text-[10px] uppercase text-slate-500">Risk budget · user set</div><b className="tabnum">{cash(budget)}</b></div>
+      <div className="rounded-lg bg-slate-950/60 p-3"><div className="text-[10px] uppercase text-slate-500">Maximum quantity</div><b className="tabnum">{maxUnits == null ? "—" : `${maxUnits} units`}</b></div>
+      <div className="rounded-lg bg-slate-950/60 p-3"><div className="text-[10px] uppercase text-slate-500">Estimated risk · entered quantity or max</div><b className={`tabnum ${budget != null && estimatedRisk > budget ? "text-amber-300" : "text-slate-100"}`}>{cash(estimatedRisk)}</b></div>
+    </div>
+    <div className="mt-2 text-xs text-slate-400">{rr == null ? "Add a target on the reward side to calculate gross R:R and its break-even win rate." : `Gross R:R 1 : ${rr.toFixed(2)} · break-even win rate ${breakEven.toFixed(1)}% before costs; arithmetic, not a forecast.`} {lot > 0 ? "Maximum quantity is rounded down to your entered lot size." : "Enter a lot size if you want the maximum quantity rounded down to whole lots."}</div>
+    {validBudget && validRisk && enteredQty > 0 && estimatedRisk > budget && <div role="status" className="mt-2 rounded border border-amber-700 bg-amber-950/30 p-2 text-xs text-amber-200">Entered quantity exceeds the risk budget you set. This is a calculation only; the dashboard does not block or place trades.</div>}
+  </Panel>;
+}
+
 function Playbook() {
   const lessons = [
     ["1 · Check data first", "Confirm the session is open, the feed is current, and enough completed bars are available. Stale or historical rows describe past data; wait for live data before making any decision."],
     ["2 · Read the board as a scan", "The order is a transparent price/volume comparison, not a probability or buy/sell instruction. Open the chart, inspect the candles and sector breadth, and remember intraday OI is not part of this board."],
-    ["3 · Treat levels as references", "Potential zones, swing pivots, and equal-price clusters are mechanical annotations. They do not establish institutional orders, guarantee support/resistance, or supply a stop or target."],
-    ["4 · Define risk before acting", "If you choose to trade manually, decide your maximum rupee loss first. A general sizing relationship is risk budget ÷ rupee risk per share; choose and place any stop yourself in your broker app. This dashboard never sends orders."],
-    ["5 · Review the record", "Record manual fills and decisions in Journal. Review net results after modelled costs, and reconcile the cost model with your contract notes before relying on the totals."],
+    ["3 · Wait for price to revisit a zone", "A zone starts as awaiting retest, then records later candle overlaps and any close invalidation. The first retest time is shown when available. These are historical candle facts; no retest is guaranteed to hold, and a wick alone does not mark a zone broken."],
+    ["4 · Calculate risk from your own levels", "Use the manual calculator below with your own capital, risk limit, planned price, and invalidation. Its size and break-even R:R calculations are arithmetic only, before fees/slippage where noted. It does not verify a stop, offer trade approval, or send an order."],
+    ["5 · Review the record", "Log the setup and habits (for example, first retest, chased, or two-way day), link a manual fill, then review the calendar and net results by tag. Modelled costs remain provisional until reconciled with contract notes."],
+    ["Daily guardrail", "Set any daily loss cap yourself before the session and avoid increasing size to recover a loss. The Journal can compare your cap with recorded closed-fill net for today; open, unrecorded, or broker-side fills are not included, and the dashboard never blocks orders."],
+    ["Options data boundary", "This dashboard observes underlying stock candles. It has no option chain, premium, implied volatility, Greeks, or expiry-decay feed, so it cannot calculate option value or suggest a call/put. Underlying price movement does not determine an option premium by itself."],
   ];
-  return <section id="playbook" className="scroll-mt-36 space-y-3" aria-label="Trading terminal playbook"><div><div className="text-xs uppercase tracking-[.2em] text-sky-300 font-bold">Quick guide</div><h2 className="mt-1 text-xl font-black">Terminal playbook</h2><p className="text-xs text-slate-500">How to read the observations and maintain your own risk process.</p></div><div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{lessons.map(([title, body]) => <details key={title} className="rounded-xl desk-card p-4 ring-1 ring-slate-800"><summary className="cursor-pointer text-sm font-bold text-slate-200">{title}</summary><p className="mt-3 text-sm leading-relaxed text-slate-400">{body}</p></details>)}</div></section>;
+  return <section id="playbook" className="scroll-mt-36 space-y-3" aria-label="Trading terminal playbook"><div><div className="text-xs uppercase tracking-[.2em] text-sky-300 font-bold">Quick guide</div><h2 className="mt-1 text-xl font-black">Terminal playbook</h2><p className="text-xs text-slate-500">How to read the observations and maintain your own risk process.</p></div><div className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">{lessons.map(([title, body]) => <details key={title} className="rounded-xl desk-card p-4 ring-1 ring-slate-800"><summary className="cursor-pointer text-sm font-bold text-slate-200">{title}</summary><p className="mt-3 text-sm leading-relaxed text-slate-400">{body}</p></details>)}</div><RiskCalculator /></section>;
 }
 
 function JournalPanel({ positions = [] }) {
@@ -1606,6 +1694,12 @@ function JournalPanel({ positions = [] }) {
   const [symbol, setSymbol] = useState("");
   const [decision, setDecision] = useState("SKIPPED");
   const [referencePrice, setReferencePrice] = useState("");
+  const [planSide, setPlanSide] = useState("");
+  const [zonePrice, setZonePrice] = useState("");
+  const [invalidationPrice, setInvalidationPrice] = useState("");
+  const [targetReference, setTargetReference] = useState("");
+  const [plannedQuantity, setPlannedQuantity] = useState("");
+  const [dailyLossCap, setDailyLossCap] = useState("");
   const [note, setNote] = useState("");
   const [setupTag, setSetupTag] = useState("UNSPECIFIED");
   const [habitTags, setHabitTags] = useState("");
@@ -1627,7 +1721,7 @@ function JournalPanel({ positions = [] }) {
     e.preventDefault(); setBusy(true); setError(null); setMessage(null);
     try {
       const r = await fetch("/journal/decisions", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ symbol, decision, position_id: positionId || null, reference_price: referencePrice ? Number(referencePrice) : null, note, setup_tag: setupTag, habit_tags: habitTags.split(",").map((t) => t.trim()).filter(Boolean).slice(0, 6) }) });
+        body: JSON.stringify({ symbol, decision, position_id: positionId || null, reference_price: referencePrice ? Number(referencePrice) : null, side: planSide || null, zone_price: zonePrice ? Number(zonePrice) : null, invalidation_price: invalidationPrice ? Number(invalidationPrice) : null, target_reference_price: targetReference ? Number(targetReference) : null, planned_quantity: plannedQuantity ? Number(plannedQuantity) : null, note, setup_tag: setupTag, habit_tags: habitTags.split(",").map((t) => t.trim()).filter(Boolean).slice(0, 6) }) });
       const payload = await r.json();
       if (!r.ok) throw new Error(payload.detail || `Journal save returned ${r.status}`);
       setMessage(payload.note); setNote(""); await refresh();
@@ -1635,12 +1729,21 @@ function JournalPanel({ positions = [] }) {
     finally { setBusy(false); }
   };
   const money = (v) => v == null ? "—" : `₹${num(v)}`;
+  const todayIst = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const closedToday = (data?.trades || []).filter((t) => t.exit_time && new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(t.exit_time)) === todayIst);
+  const closedTodayNet = closedToday.reduce((sum, t) => sum + Number(t.net_pnl || 0), 0);
+  const capValue = dailyLossCap === "" ? null : Number(dailyLossCap);
   return (
     <section id="journal" className="scroll-mt-36 space-y-4" aria-label="Trading journal">
       <div><div className="text-xs uppercase tracking-[.2em] text-sky-300 font-bold">Decision record</div><h2 className="mt-1 text-2xl font-black">Journal &amp; analytics</h2><p className="text-sm text-slate-400">Manual fills, skipped decisions, checks and exit guidance in one timeline.</p></div>
       <Panel title="Record a decision"><form onSubmit={submit} className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4 items-end">
         <Input label="symbol" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} required maxLength="32" placeholder="e.g. RELIANCE" />
         <label><span className="block mb-1 text-xs uppercase tracking-wider text-slate-400">decision</span><select value={decision} onChange={(e) => setDecision(e.target.value)} className="w-full rounded bg-slate-800 px-3 py-2 ring-1 ring-slate-600 text-sm"><option value="SKIPPED">Skipped</option><option value="TAKEN">Taken</option></select></label>
+        <label><span className="block mb-1 text-xs uppercase tracking-wider text-slate-400">planned side (optional)</span><select value={planSide} onChange={(e) => setPlanSide(e.target.value)} className="w-full rounded bg-slate-800 px-3 py-2 ring-1 ring-slate-600 text-sm"><option value="">Not recorded</option><option value="BULLISH">Bullish</option><option value="BEARISH">Bearish</option></select></label>
+        <Input label="zone reference · ₹ (optional)" type="number" min="0.01" step="any" value={zonePrice} onChange={(e) => setZonePrice(e.target.value)} />
+        <Input label="invalidation boundary · ₹ (optional)" type="number" min="0.01" step="any" value={invalidationPrice} onChange={(e) => setInvalidationPrice(e.target.value)} />
+        <Input label="target reference · ₹ (optional)" type="number" min="0.01" step="any" value={targetReference} onChange={(e) => setTargetReference(e.target.value)} />
+        <Input label="planned quantity · units (optional)" type="number" min="1" step="1" value={plannedQuantity} onChange={(e) => setPlannedQuantity(e.target.value)} />
         <Input label="reference price (optional)" type="number" min="0.01" step="0.01" value={referencePrice} onChange={(e) => setReferencePrice(e.target.value)} />
         <label><span className="block mb-1 text-xs uppercase tracking-wider text-slate-400">linked position (optional)</span><select value={positionId} onChange={(e) => setPositionId(e.target.value)} className="w-full rounded bg-slate-800 px-3 py-2 ring-1 ring-slate-600 text-sm"><option value="">No linked position</option>{positions.map((p) => <option key={p.position_id} value={p.position_id}>{p.symbol} · {p.position_id}</option>)}</select></label>
         <Input label="note" value={note} onChange={(e) => setNote(e.target.value)} maxLength="1200" placeholder="Reason, context, or what you observed" />
@@ -1658,6 +1761,7 @@ function JournalPanel({ positions = [] }) {
           <div className="rounded-xl desk-card ring-1 ring-slate-700 p-4"><div className="text-xs uppercase tracking-widest text-slate-400">Modelled costs</div><div className="mt-1 text-2xl font-black tabnum text-amber-200">{money(data.analytics.modelled_costs)}</div></div>
           <div className="rounded-xl desk-card ring-1 ring-slate-700 p-4"><div className="text-xs uppercase tracking-widest text-slate-400">Net realised</div><div className={`mt-1 text-2xl font-black tabnum ${Number(data.analytics.net_realised) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{money(data.analytics.net_realised)}</div></div>
         </div>
+        <Panel title="Daily loss guardrail · recorded closed fills"><div className="grid gap-3 sm:grid-cols-3 sm:items-end"><Input label="your daily loss cap · ₹ (optional)" type="number" min="0" step="any" value={dailyLossCap} onChange={(e) => setDailyLossCap(e.target.value)} /><div className="rounded-lg bg-slate-950/60 p-3"><div className="text-[10px] uppercase text-slate-500">Closed-fill net today · IST</div><b className={`tabnum ${closedTodayNet >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{money(closedTodayNet)}</b><div className="text-[10px] text-slate-500">{closedToday.length} recorded close(s)</div></div><div role="status" className="rounded-lg bg-slate-950/60 p-3 text-xs text-slate-300">{capValue == null || capValue <= 0 ? "Enter a cap to compare it with recorded closes." : closedTodayNet <= -capValue ? "Recorded closed-fill loss has reached this user-set cap." : `${money(Math.max(0, capValue + Math.min(0, closedTodayNet)))} of the user-set cap remains, based on recorded closed fills.`}</div></div><p className="mt-2 text-[10px] text-slate-500">This does not include open or unrecorded trades and does not block orders. Net P&amp;L uses the configured cost model and may be provisional.</p></Panel>
         <PnlHeatmap trades={data.trades}/>
         <div className="grid gap-3 lg:grid-cols-2"><Panel title="Closed net by setup">{data.setup_analytics && data.setup_analytics.length ? <div className="space-y-2">{data.setup_analytics.map((x) => <div key={x.tag} className="flex items-center justify-between gap-3 rounded-lg bg-slate-950/60 p-2 text-sm"><span>{x.tag} <small className="text-slate-500">· {x.closed_trades} linked fill(s)</small></span><b className={`tabnum ${Number(x.net_realised) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{money(x.net_realised)}</b></div>)}</div> : <p className="text-sm text-slate-500">Link a decision note to a closed position to see setup results.</p>}</Panel><Panel title="Closed net by habit">{data.habit_analytics && data.habit_analytics.length ? <div className="space-y-2">{data.habit_analytics.map((x) => <div key={x.tag} className="flex items-center justify-between gap-3 rounded-lg bg-slate-950/60 p-2 text-sm"><span>{x.tag} <small className="text-slate-500">· {x.closed_trades} linked fill(s)</small></span><b className={`tabnum ${Number(x.net_realised) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>{money(x.net_realised)}</b></div>)}</div> : <p className="text-sm text-slate-500">Add habit tags to linked decision notes to compare realized results.</p>}</Panel></div>
         {data.analytics.check_summary && <div className="rounded-lg bg-slate-950/60 px-4 py-3 text-sm text-slate-300"><span className="font-bold">Check outcome review: </span>{data.analytics.check_summary.headline}</div>}
@@ -1666,7 +1770,7 @@ function JournalPanel({ positions = [] }) {
             {data.trades.length ? <div className="space-y-2">{data.trades.map((t) => <div key={t.position_id} className="rounded-lg bg-slate-950/60 p-3"><div className="flex justify-between gap-2"><b>{t.symbol} · {t.quantity} shares</b><span className={`tabnum font-bold ${Number(t.net_pnl) >= 0 ? "text-emerald-300" : "text-rose-300"}`}>Net {money(t.net_pnl)}</span></div><div className="mt-1 text-xs text-slate-400">Entry {money(t.entry_price)} → exit {money(t.exit_price)} · costs {money(t.costs)} · {new Date(t.exit_time).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</div></div>)}</div> : <p className="text-sm text-slate-500">No manually closed fills recorded yet.</p>}
           </Panel>
           <Panel title={`Decision notes · ${data.decisions.length}`}>
-            {data.decisions.length ? <div className="space-y-2">{data.decisions.slice(0, 12).map((d) => <div key={d.event_id} className="rounded-lg bg-slate-950/60 p-3"><div className="flex justify-between gap-2"><b>{d.symbol}</b><span className={`text-xs font-black ${d.decision === "TAKEN" ? "text-sky-300" : "text-amber-300"}`}>{d.decision}</span></div><div className="mt-1 text-sm text-slate-300">{d.note || "No note supplied."}</div><div className="mt-1 text-xs text-slate-400">Setup: {d.setup_tag || "UNSPECIFIED"} · Habits: {(d.habit_tags || []).join(", ") || "—"}</div><div className="mt-1 text-xs text-slate-500">{d.position_id ? `Position ${d.position_id} · ${d.outcome?.state === "CLOSED" ? `closed net ${money(d.outcome.net_pnl)}` : "open or not closed"} · ` : ""}{d.reference_price ? `Reference ₹${num(d.reference_price)} · ` : ""}{new Date(d.recorded_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</div></div>)}</div> : <p className="text-sm text-slate-500">No taken or skipped decisions noted yet.</p>}
+            {data.decisions.length ? <div className="space-y-2">{data.decisions.slice(0, 12).map((d) => <div key={d.event_id} className="rounded-lg bg-slate-950/60 p-3"><div className="flex justify-between gap-2"><b>{d.symbol}</b><span className={`text-xs font-black ${d.decision === "TAKEN" ? "text-sky-300" : "text-amber-300"}`}>{d.decision}</span></div><div className="mt-1 text-sm text-slate-300">{d.note || "No note supplied."}</div><div className="mt-1 text-xs text-slate-400">Plan: {[d.side, d.zone_price ? `zone ₹${num(d.zone_price)}` : null, d.invalidation_price ? `invalidation ₹${num(d.invalidation_price)}` : null, d.target_reference_price ? `target ref ₹${num(d.target_reference_price)}` : null, d.planned_quantity ? `${d.planned_quantity} units` : null].filter(Boolean).join(" · ") || "—"}</div><div className="mt-1 text-xs text-slate-400">Setup: {d.setup_tag || "UNSPECIFIED"} · Habits: {(d.habit_tags || []).join(", ") || "—"}</div><div className="mt-1 text-xs text-slate-500">{d.position_id ? `Position ${d.position_id} · ${d.outcome?.state === "CLOSED" ? `closed net ${money(d.outcome.net_pnl)}` : "open or not closed"} · ` : ""}{d.reference_price ? `Reference ₹${num(d.reference_price)} · ` : ""}{new Date(d.recorded_at).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}</div></div>)}</div> : <p className="text-sm text-slate-500">No taken or skipped decisions noted yet.</p>}
           </Panel>
           <Panel title={`Entry checks · ${data.checks.length}`}>
             {data.checks.length ? <div className="max-h-72 space-y-2 overflow-auto">{data.checks.slice(0, 15).map((c) => <div key={c.check_id} className="flex items-start justify-between gap-3 border-b border-slate-800 py-2 text-sm"><div><b>{c.symbol}</b><div className="text-xs text-slate-400">{c.reason}</div></div><span className="shrink-0 text-xs text-slate-400">{c.verdict} · {c.outcome_state}</span></div>)}</div> : <p className="text-sm text-slate-500">No checks recorded.</p>}

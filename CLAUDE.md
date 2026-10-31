@@ -945,6 +945,15 @@ institutional orders or derive projected S1/R1/R2 advice. Keep the board isolate
 entry checks, outcome logs, and position advice. The user explicitly selected this
 limited scope.
 
+The popup may compare a row with its board side, sector average, breadth, and estimated
+VWAP as a factual context checklist. It is not a signal, ranking, or position-size
+recommendation. Manual risk arithmetic is allowed only for values the user enters:
+capital, risk budget, price, invalidation, optional target, quantity, and lot size.
+The daily loss monitor compares a user-entered limit with recorded closed fills only;
+it does not include open/unrecorded trades or prevent orders. No option-chain, premium,
+implied-volatility, Greeks, or expiry-decay data exists, so the UI must not infer option
+value or recommend calls/puts from the underlying stock feed.
+
 The descriptive `/market` view is separate from Module B: alphabetical rows report
 completed-bar movement, breadth covers fresh subscribed stock symbols, and indices are
 separate context. Its owner-approved scanner sub-object has the limited descriptive

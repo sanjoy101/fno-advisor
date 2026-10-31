@@ -92,7 +92,11 @@ The dashboard reports retests and close invalidation. The board excludes OI beca
 the intraday candle feed does not provide it. Its zones and pivots are price
 references, not verified institutional orders,
 trade recommendations, or projected stop/target levels. VWAP is estimated from candle
-typical prices and volume.
+typical prices and volume. The chart popup adds a four-part descriptive context check
+(board, sector, breadth, and VWAP), not a signal. The playbook includes a user-entered
+position-size and gross R:R calculator; the journal records a manual plan and compares
+an optional daily loss cap with recorded closed fills only. Neither tool blocks or
+places orders. No option-chain or Greeks feed is available.
 Run `python -m src.cli refresh-universe` to download, validate, and save the dated
 FYERS NSE F&O symbol master. Default LIVE scans use that snapshot while it is no more
 than seven days old, otherwise they fall back to the maintained 21-name liquid subset

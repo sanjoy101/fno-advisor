@@ -25,6 +25,11 @@ class DecisionNote(BaseModel):
     position_id: str | None = Field(default=None, max_length=80)
     recorded_at: datetime = Field(default_factory=now_ist)
     reference_price: float | None = Field(default=None, gt=0)
+    side: Literal["BULLISH", "BEARISH"] | None = None
+    zone_price: float | None = Field(default=None, gt=0)
+    invalidation_price: float | None = Field(default=None, gt=0)
+    target_reference_price: float | None = Field(default=None, gt=0)
+    planned_quantity: int | None = Field(default=None, gt=0)
     note: str = Field(default="", max_length=1200)
     setup_tag: str = Field(default="UNSPECIFIED", max_length=64)
     habit_tags: list[str] = Field(default_factory=list, max_length=6)
