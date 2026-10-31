@@ -217,7 +217,7 @@ def create_app(runtime: SessionRuntime, *, run_loop: bool = True) -> FastAPI:
         return runtime.market_overview()
 
     @app.get("/market/{symbol}")
-    async def market_chart(symbol: str, interval: int = 1) -> dict:
+    async def market_chart(symbol: str, interval: int = 5) -> dict:
         """Completed candles and potential structure for one subscribed symbol."""
         if interval not in {1, 5, 15}:
             raise HTTPException(422, "interval must be 1, 5 or 15 minutes")

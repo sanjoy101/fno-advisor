@@ -11,7 +11,7 @@ from collections import defaultdict
 from statistics import fmean
 from typing import Sequence
 
-from src.market.calendar import ensure_ist
+from src.market.calendar import SESSION_OPEN, ensure_ist
 from src.positions.models import BAR_INTERVAL, Bar
 
 INDEX_SYMBOLS = frozenset({"NIFTY", "BANKNIFTY"})
@@ -93,11 +93,12 @@ def _equal_levels(pivots: list[tuple[int, float]], tolerance: float) -> list[dic
 def market_structure(bars: Sequence[Bar], *, max_zones: int = 6) -> dict:
     """Find confirmed swing, equal-price and displacement zones.
 
-    A candidate order block is the last opposite-colour candle in the three bars
-    before a completed displacement candle whose range is at least 1.5 prior ATRs
-    and which closes through the most recent confirmed swing. The zone is the full
-    high-low of that opposite candle. Only a mechanical pattern is reported; it is
-    not evidence of institutional orders or a forecast.
+    A candidate zone is the last opposite-colour candle in the three bars before a
+    completed displacement candle whose range is at least 1.5 prior ATRs and which
+    closes through the most recent confirmed swing or opening 15-minute range. The
+    zone is the full high-low of that opposite candle. Subsequent retests and closes
+    beyond its far edge are described mechanically; no institutional orders or
+    forecast are inferred.
     """
     if len(bars) < 7:
         return {"state": "INSUFFICIENT_BARS", "swing_highs": [], "swing_lows": [],
@@ -110,6 +111,13 @@ def market_structure(bars: Sequence[Bar], *, max_zones: int = 6) -> dict:
     zones = []
     high_cursor = low_cursor = 0
     last_high = last_low = None
+    opening_high = opening_low = None
+    if (len(bars) >= 4 and
+            bars[0].ts.timetz().replace(tzinfo=None) == SESSION_OPEN and
+            bars[1].ts - bars[0].ts == 5 * BAR_INTERVAL and
+            bars[2].ts - bars[1].ts == 5 * BAR_INTERVAL):
+        opening_high = max(b.high for b in bars[:3])
+        opening_low = min(b.low for b in bars[:3])
     for i in range(3, len(bars)):
         # A pivot centered at i-3 is the newest one whose two right-hand bars
         # existed before candidate candle i. Use the globally computed pivot list
@@ -130,10 +138,14 @@ def market_structure(bars: Sequence[Bar], *, max_zones: int = 6) -> dict:
             continue
         # The cursor includes only pivots whose right wing completed before i, so
         # future bars cannot retrospectively validate an earlier breakout.
-        direction = ("BULLISH" if candle.close > candle.open and last_high is not None
-                     and candle.close > last_high else
-                     "BEARISH" if candle.close < candle.open and last_low is not None
-                     and candle.close < last_low else None)
+        swing_break_up = last_high is not None and candle.close > last_high
+        swing_break_down = last_low is not None and candle.close < last_low
+        opening_break_up = opening_high is not None and candle.close > opening_high
+        opening_break_down = opening_low is not None and candle.close < opening_low
+        direction = ("BULLISH" if candle.close > candle.open and
+                     (swing_break_up or opening_break_up) else
+                     "BEARISH" if candle.close < candle.open and
+                     (swing_break_down or opening_break_down) else None)
         if direction is None:
             continue
         opposite = next((j for j in range(i - 1, max(-1, i - 4), -1)
@@ -142,20 +154,69 @@ def market_structure(bars: Sequence[Bar], *, max_zones: int = 6) -> dict:
         if opposite is None:
             continue
         block = bars[opposite]
+        prior_volumes = [b.volume for b in bars[max(0, opposite - 20):opposite]]
+        mean_prior_volume = fmean(prior_volumes) if prior_volumes else 0
         zones.append({"direction": direction, "low": block.low, "high": block.high,
                       "formed_at": block.ts.isoformat(),
                       "confirmed_at": candle.close_time.isoformat(),
                       "displacement_atr": round(move / prior_atr, 2),
-                      "status": "POTENTIAL_ZONE"})
+                      "break_reference": "CONFIRMED_SWING" if
+                          (swing_break_up if direction == "BULLISH" else swing_break_down)
+                          else "OPENING_RANGE",
+                      "volume_at_zone": block.volume,
+                      "volume_ratio_at_zone": round(block.volume / mean_prior_volume, 2)
+                          if mean_prior_volume > 0 else None,
+                      "_confirmed_bar": i})
+    for zone in zones:
+        confirmed_bar = zone.pop("_confirmed_bar")
+        was_overlapping = False
+        retests = 0
+        first_retest_at = None
+        invalidated_at = None
+        for later in bars[confirmed_bar + 1:]:
+            invalidated = (later.close < zone["low"] if zone["direction"] == "BULLISH"
+                           else later.close > zone["high"])
+            if invalidated and invalidated_at is None:
+                invalidated_at = later.close_time.isoformat()
+            overlapping = later.low <= zone["high"] and later.high >= zone["low"]
+            if overlapping and not was_overlapping:
+                retests += 1
+                if first_retest_at is None:
+                    first_retest_at = later.close_time.isoformat()
+            was_overlapping = overlapping
+        zone["retests"] = retests
+        zone["first_retest_at"] = first_retest_at
+        zone["invalidated_at"] = invalidated_at
+        zone["status"] = "INVALIDATED" if invalidated_at else "RETESTED" if retests else "AWAITING_RETEST"
+    equal_highs = _equal_levels(tail_highs, tolerance)
+    equal_lows = _equal_levels(tail_lows, tolerance)
+    for level in equal_highs:
+        level["status"] = ("CLOSED_ABOVE" if any(b.close > level["price"]
+            for b in bars[level["last_bar"] + 3:]) else "UNBROKEN")
+    for level in equal_lows:
+        level["status"] = ("CLOSED_BELOW" if any(b.close < level["price"]
+            for b in bars[level["last_bar"] + 3:]) else "UNBROKEN")
+    def annotated_pivots(pivots, *, high: bool) -> list[dict]:
+        result = []
+        for index, price in pivots[-12:]:
+            later = bars[index + 3:]
+            crossed = any(b.close > price if high else b.close < price for b in later)
+            result.append({"bar": index, "price": price,
+                           "status": ("CLOSED_ABOVE" if high else "CLOSED_BELOW")
+                                     if crossed else "UNBROKEN"})
+        return result
+
     return {
         "state": "AVAILABLE",
-        "swing_highs": [{"bar": i, "price": p} for i, p in tail_highs],
-        "swing_lows": [{"bar": i, "price": p} for i, p in tail_lows],
-        "equal_highs": _equal_levels(tail_highs, tolerance),
-        "equal_lows": _equal_levels(tail_lows, tolerance),
+        "swing_highs": annotated_pivots(tail_highs, high=True),
+        "swing_lows": annotated_pivots(tail_lows, high=False),
+        "equal_highs": equal_highs,
+        "equal_lows": equal_lows,
         "order_blocks": zones[-max_zones:],
-        "rules": {"pivot_wing_bars": 2, "equal_level_tolerance": round(tolerance, 4),
-                  "displacement_min_atr": 1.5, "zone_source": "last opposite candle"},
+        "rules": {"pivot_wing_bars": 2, "opening_range_bars": 3,
+                  "equal_level_tolerance": round(tolerance, 4),
+                  "displacement_min_atr": 1.5, "zone_source": "last opposite candle",
+                  "zone_status": "subsequent candle overlap retests and close beyond far edge"},
     }
 
 
@@ -183,25 +244,44 @@ def scanner_observation(bars: Sequence[Bar], *, choppy_efficiency: float = 0.20)
     """Describe completed-bar direction, path efficiency, and recent volume activity.
 
     Data-availability boundary:
-        Uses only the supplied completed bars, in chronological order. Price change
-        is measured from the first available bar's open to the latest close. Recent
-        volume is the mean of the latest five bars versus the mean of up to the prior
-        fifteen bars. At least five bars are required in each volume window. This is
-        an intraday comparison, not a multi-day or time-of-day-normalized baseline.
+        Uses only the supplied completed one-minute bars, in chronological order. If
+        the series starts at 09:15 IST, the first five opening bars are excluded.
+        Price change is measured from the first remaining bar's open to the latest
+        close. Recent volume is the mean of the latest five bars versus the mean of
+        up to the prior fifteen bars. At least five bars are required in each window.
+        This is not a multi-day or time-of-day-normalized baseline.
     """
-    if len(bars) < 10:
+    if not bars:
         return {"eligible": False, "reason": "NEED_MORE_BARS", "score": None,
-                "direction": None, "volume_ratio": None, "efficiency": None}
-    recent = bars[-5:]
-    prior = bars[max(0, len(bars) - 20):-5]
+                "direction": None, "volume_ratio": None, "efficiency": None,
+                "vwap": None, "opening_bars_excluded": False}
+    # A feed may retain prior sessions for chart context. Scanner baselines and VWAP
+    # are intraday measures, so only use the date of the latest completed bar.
+    session_date = bars[-1].ts.date()
+    session_bars = [bar for bar in bars if bar.ts.date() == session_date]
+    opening_excluded = bool(session_bars and
+                            session_bars[0].ts.timetz().replace(tzinfo=None) == SESSION_OPEN)
+    sample = session_bars[5:] if opening_excluded else session_bars
+    total_volume = sum(b.volume for b in session_bars)
+    vwap = (sum(((b.high + b.low + b.close) / 3) * b.volume for b in session_bars) / total_volume
+            if total_volume > 0 else None)
+    if len(sample) < 10:
+        return {"eligible": False, "reason": "NEED_MORE_BARS", "score": None,
+                "direction": None, "volume_ratio": None, "efficiency": None,
+                "vwap": round(vwap, 4) if vwap is not None else None,
+                "opening_bars_excluded": opening_excluded}
+    recent = sample[-5:]
+    prior = sample[max(0, len(sample) - 20):-5]
     if len(prior) < 5 or fmean(b.volume for b in prior) <= 0:
         return {"eligible": False, "reason": "VOLUME_BASELINE_UNAVAILABLE", "score": None,
-                "direction": None, "volume_ratio": None, "efficiency": None}
+                "direction": None, "volume_ratio": None, "efficiency": None,
+                "vwap": round(vwap, 4) if vwap is not None else None,
+                "opening_bars_excluded": opening_excluded}
     volume_ratio = fmean(b.volume for b in recent) / fmean(b.volume for b in prior)
-    first, last = bars[0], bars[-1]
+    first, last = sample[0], sample[-1]
     net = last.close - first.open
     path = abs(first.close - first.open) + sum(
-        abs(right.close - left.close) for left, right in zip(bars, bars[1:])
+        abs(right.close - left.close) for left, right in zip(sample, sample[1:])
     )
     efficiency = min(1.0, abs(net) / path) if path > 0 else 0.0
     change_pct = net / first.open * 100 if first.open else 0.0
@@ -209,23 +289,44 @@ def scanner_observation(bars: Sequence[Bar], *, choppy_efficiency: float = 0.20)
     if direction is None:
         return {"eligible": False, "reason": "NO_DIRECTIONAL_CHANGE", "score": 0.0,
                 "direction": None, "volume_ratio": round(volume_ratio, 2),
-                "efficiency": round(efficiency, 3), "change_pct": round(change_pct, 3)}
+                "efficiency": round(efficiency, 3), "change_pct": round(change_pct, 3),
+                "vwap": round(vwap, 4) if vwap is not None else None,
+                "opening_bars_excluded": opening_excluded}
     if efficiency < choppy_efficiency:
         return {"eligible": False, "reason": "CHOPPY_PATH", "score": 0.0,
                 "direction": direction, "volume_ratio": round(volume_ratio, 2),
-                "efficiency": round(efficiency, 3), "change_pct": round(change_pct, 3)}
+                "efficiency": round(efficiency, 3), "change_pct": round(change_pct, 3),
+                "vwap": round(vwap, 4) if vwap is not None else None,
+                "opening_bars_excluded": opening_excluded}
     score = abs(change_pct) * min(volume_ratio, 5.0) * efficiency
     return {"eligible": True, "reason": None, "score": round(score, 4),
             "direction": direction, "volume_ratio": round(volume_ratio, 2),
-            "efficiency": round(efficiency, 3), "change_pct": round(change_pct, 3)}
+            "efficiency": round(efficiency, 3), "change_pct": round(change_pct, 3),
+            "vwap": round(vwap, 4) if vwap is not None else None,
+            "opening_bars_excluded": opening_excluded}
 
 
 def sector_breadth(rows: Sequence[dict], sectors: dict[str, str]) -> list[dict]:
-    """Descriptive advancing/declining counts; unknown sectors stay explicit."""
-    groups: dict[str, dict[str, int]] = defaultdict(lambda: {"up": 0, "down": 0, "flat": 0, "no_data": 0})
+    """Descriptive sector participation and average move from completed observations."""
+    groups: dict[str, dict] = defaultdict(lambda: {
+        "up": 0, "down": 0, "flat": 0, "no_data": 0,
+        "move_sum": 0.0, "move_count": 0, "members": [],
+    })
     for row in rows:
         sector = sectors.get(row["symbol"], "UNKNOWN")
         state = row.get("state")
         key = "up" if state == "UP_FROM_BASELINE" else "down" if state == "DOWN_FROM_BASELINE" else "flat" if state == "AT_BASELINE" else "no_data"
-        groups[sector][key] += 1
-    return [{"sector": sector, **counts} for sector, counts in sorted(groups.items())]
+        group = groups[sector]
+        group[key] += 1
+        move = row.get("change_from_baseline_pct")
+        if move is not None:
+            group["move_sum"] += float(move)
+            group["move_count"] += 1
+        group["members"].append({"symbol": row["symbol"], "state": state,
+                                 "change_pct": move})
+    return [{"sector": sector, "up": values["up"], "down": values["down"],
+             "flat": values["flat"], "no_data": values["no_data"],
+             "average_change_pct": round(values["move_sum"] / values["move_count"], 3)
+                 if values["move_count"] else None,
+             "members": sorted(values["members"], key=lambda member: member["symbol"])}
+            for sector, values in sorted(groups.items())]

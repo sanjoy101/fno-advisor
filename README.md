@@ -82,10 +82,14 @@ is unreachable until `COST_RATES_VERIFIED=true`. Not yet wired to the dashboard 
 
 The dashboard includes a transparent, descriptive intraday price/volume board (up to
 20 symbols per direction), completed-candle structure charts, NIFTY/BANKNIFTY context,
-sector breadth, a price-structure alert feed, and a decision journal with a net-P&L
-calendar. The board uses completed bars only; it excludes OI because the intraday candle
-feed does not provide it. Its mechanical zones and pivots are price references, not
-verified institutional orders, trade recommendations, or projected stop/target levels.
+sector participation and breadth map, a price-structure alert feed, and a decision
+journal with setup/habit tags, net results by tag, and a P&L calendar. Rankings use
+completed one-minute bars after skipping the first five opening bars when present;
+mechanical zones use completed five-minute bars by default and report retests and close
+invalidation. The board excludes OI because the intraday candle feed does not provide
+it. Its zones and pivots are price references, not verified institutional orders,
+trade recommendations, or projected stop/target levels. VWAP is estimated from candle
+typical prices and volume.
 Run `python -m src.cli refresh-universe` to download, validate, and save the dated
 FYERS NSE F&O symbol master. Default LIVE scans use that snapshot while it is no more
 than seven days old, otherwise they fall back to the maintained 21-name liquid subset

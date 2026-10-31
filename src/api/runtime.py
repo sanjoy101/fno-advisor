@@ -215,7 +215,10 @@ class SessionRuntime:
         self._last_advice_logged: dict[str, tuple[str, str]] = {}
         self._market_structure_last_bar: dict[str, datetime] = {}
         self._market_structure_cache: dict[str, tuple[datetime, dict[str, Any]]] = {}
+        self._market_5m_bars_cache: dict[str, tuple[datetime, list]] = {}
+        self._market_scanner_cache: dict[str, tuple[datetime, dict[str, Any]]] = {}
         self._market_alert_seen_ids: set[str] = set()
+        self._market_zone_status_seen: dict[str, str] = {}
         self._market_alerts: list[dict[str, Any]] = []
         self._market_alerts_initialized = False
         self._stopped = False
@@ -926,7 +929,7 @@ class SessionRuntime:
             )
             row["data_age_seconds"] = None if age is None else round(age, 1)
             row["sector"] = "INDEX" if symbol in INDEX_SYMBOLS else SECTORS.get(symbol, "UNKNOWN")
-            row["scanner"] = scanner_observation(bars) if symbol not in INDEX_SYMBOLS else None
+            row["scanner"] = self._market_scanner_for(symbol, bars, now) if symbol not in INDEX_SYMBOLS else None
             (index_rows if symbol in INDEX_SYMBOLS else rows).append(row)
 
         # Evaluate structure only when a new completed candle arrives. Seed existing
@@ -946,7 +949,7 @@ class SessionRuntime:
                              key=lambda r: (-r["scanner"]["score"], r["symbol"]))[:20]
             result = []
             for rank, row in enumerate(leaders, 1):
-                structure = self._market_structure_for(row["symbol"], bars_by_symbol[row["symbol"]])
+                structure = self._market_structure_for(row["symbol"], bars_by_symbol[row["symbol"]], now)
                 result.append({**row, "rank": rank, "structure": {
                     "potential_zones": structure.get("order_blocks", [])[-3:],
                     "swing_highs": structure.get("swing_highs", [])[-3:],
@@ -961,7 +964,7 @@ class SessionRuntime:
             "not_ready_count": sum(not r["scanner"] or r["scanner"]["reason"] in
                                     {"NEED_MORE_BARS", "VOLUME_BASELINE_UNAVAILABLE"} for r in rows),
             "asof": now.isoformat(), "is_ranking": True,
-            "formula": "Score = |first available bar open to latest completed close (%)| × min(recent volume ratio, 5) × path efficiency. Recent volume ratio compares average volume in the latest 5 completed bars with the average in up to the preceding 15 bars. Path efficiency below 0.20 is marked choppy and excluded.",
+            "formula": "After excluding the first five 09:15-09:20 opening bars (when present), score = |first remaining one-minute bar open to latest completed one-minute close (%)| × min(recent volume ratio, 5) × path efficiency. Recent volume ratio compares average volume in the latest 5 completed one-minute bars with the average in up to the preceding 15 bars. Path efficiency below 0.20 is marked choppy and excluded. Session VWAP uses all completed bars.",
             "limitations": "Descriptive ranking only; no forecast or trade recommendation. OI is unavailable in the intraday candle feed and is excluded. Volume ratio is an intraday recent-versus-prior comparison, not a historical time-of-day norm. Ranks use fresh data during market hours; closed-session rows are historical context.",
             "mechanical_levels": "Potential zones, confirmed swing pivots and equal-price references are computed from completed candles. They do not identify verified institutional orders or project stop/target prices."}
         sector_rows = fresh if market_active else [r for r in rows if r["state"] != "NO_DATA"]
@@ -1019,25 +1022,39 @@ class SessionRuntime:
             bars = self.feed.bars(symbol)
             if not bars:
                 continue
-            last_time = bars[-1].close_time
+            bars_5m = self._market_5m_bars_for(symbol, bars, self.now())
+            if not bars_5m:
+                continue
+            last_time = bars_5m[-1].close_time
             if self._market_structure_last_bar.get(symbol) == last_time:
                 continue
-            structure = self._market_structure_for(symbol, bars)
+            structure = self._market_structure_for(symbol, bars, self.now())
             self._market_structure_last_bar[symbol] = last_time
             candidates = []
             for z in structure.get("order_blocks", []):
-                candidates.append({"id": f"{symbol}|ZONE|{z['confirmed_at']}|{z['direction']}",
-                    "symbol": symbol, "kind": "POTENTIAL_ZONE", "title": f"Potential {z['direction'].lower()} zone",
-                    "at": z["confirmed_at"], "low": z["low"], "high": z["high"],
-                    "detail": f"Completed-bar displacement: {z['displacement_atr']} prior ATR; zone is the last opposite candle."})
+                zone_key = f"{symbol}|ZONE|{z['confirmed_at']}|{z['direction']}"
+                previous_status = self._market_zone_status_seen.get(zone_key)
+                self._market_zone_status_seen[zone_key] = z["status"]
+                if previous_status is None and z["confirmed_at"] == last_time.isoformat() and z["status"] != "INVALIDATED":
+                    candidates.append({"id": zone_key, "symbol": symbol, "kind": "POTENTIAL_ZONE",
+                        "title": f"New mechanical {z['direction'].lower()} zone",
+                        "at": z["confirmed_at"], "low": z["low"], "high": z["high"],
+                        "detail": f"Completed 5-minute displacement: {z['displacement_atr']} prior ATR; {z['break_reference'].lower()} break. This is a candle pattern, not evidence of institutional orders."})
+                elif previous_status and previous_status != z["status"]:
+                    candidates.append({"id": f"{zone_key}|{z['status']}", "symbol": symbol,
+                        "kind": "ZONE_STATUS", "title": f"Mechanical zone {z['status'].lower().replace('_', ' ')}",
+                        "at": last_time.isoformat(), "low": z["low"], "high": z["high"],
+                        "detail": f"Zone status changed from {previous_status} to {z['status']} on completed 5-minute bars."})
             for kind, levels, title in (("EQUAL_HIGH", structure.get("equal_highs", []), "Potential equal-high price reference"),
                                          ("EQUAL_LOW", structure.get("equal_lows", []), "Potential equal-low price reference")):
                 for level in levels:
-                    pivot_index = min(level["last_bar"] + 2, len(bars) - 1)
-                    at = bars[pivot_index].close_time.isoformat()
-                    candidates.append({"id": f"{symbol}|{kind}|{at}|{level['price']}", "symbol": symbol,
-                        "kind": kind, "title": title, "at": at, "price": level["price"],
-                        "detail": f"{level['touches']} confirmed pivots within the mechanical price tolerance; not evidence of resting orders."})
+                    pivot_index = min(level["last_bar"] + 2, len(bars_5m) - 1)
+                    at = bars_5m[pivot_index].close_time.isoformat()
+                    status_text = level.get("status", "UNBROKEN")
+                    candidates.append({"id": f"{symbol}|{kind}|{at}|{level['price']}|{status_text}", "symbol": symbol,
+                        "kind": kind, "title": title if status_text == "UNBROKEN" else f"Equal-price reference {status_text.lower().replace('_', ' ')}",
+                        "at": at, "price": level["price"],
+                        "detail": f"{level['touches']} confirmed pivots; later-close status {status_text}. A price reference, not evidence of resting orders."})
             for event in candidates:
                 if event["id"] in self._market_alert_seen_ids:
                     continue
@@ -1049,27 +1066,68 @@ class SessionRuntime:
         self._market_alerts = self._market_alerts[:40]
         return list(self._market_alerts)
 
-    def _market_structure_for(self, symbol: str, bars) -> dict:
-        """Cache structure from the supplied completed-bar history.
+    def _market_5m_bars_for(self, symbol: str, bars, asof: datetime) -> list:
+        """Resample the supplied completed minute bars to complete five-minute bars.
 
         Data-availability boundary:
-            Uses only the supplied completed bars through the latest bar's close time;
-            a forming candle and any later bar are excluded by the caller.
+            Uses one-minute bars completed by ``asof``. The partial five-minute bucket
+            containing ``asof`` is excluded by ``resample_bars``.
+        """
+        from src.market.structure import resample_bars
+        if not bars:
+            return []
+        source_last_time = bars[-1].close_time
+        cached = self._market_5m_bars_cache.get(symbol)
+        if cached and cached[0] == source_last_time:
+            return cached[1]
+        result = resample_bars(bars, 5, asof)
+        self._market_5m_bars_cache[symbol] = (source_last_time, result)
+        return result
+
+    def _market_scanner_for(self, symbol: str, bars, asof: datetime) -> dict:
+        """Cache a descriptive scan metric until a new completed minute bar arrives.
+
+        Data-availability boundary:
+            The metric uses only the supplied completed one-minute bars through
+            ``asof``; the current forming minute bar is excluded by the feed.
+        """
+        from src.market.structure import scanner_observation
+        if not bars:
+            return scanner_observation([])
+        source_last_time = bars[-1].close_time
+        cached = self._market_scanner_cache.get(symbol)
+        if cached and cached[0] == source_last_time:
+            return cached[1]
+        metric = scanner_observation(bars)
+        self._market_scanner_cache[symbol] = (source_last_time, metric)
+        return metric
+
+    def _market_structure_for(self, symbol: str, bars, asof: datetime) -> dict:
+        """Cache price structure from the latest complete five-minute candles.
+
+        Data-availability boundary:
+            Uses complete five-minute bars resampled from supplied minute bars through
+            ``asof``. The partial five-minute bucket and all later bars are excluded.
         """
         from src.market.structure import market_structure
-        if not bars:
+        bars_5m = self._market_5m_bars_for(symbol, bars, asof)
+        if not bars_5m:
             return {"state": "INSUFFICIENT_BARS", "order_blocks": [], "swing_highs": [],
                     "swing_lows": [], "equal_highs": [], "equal_lows": []}
-        last_time = bars[-1].close_time
+        last_time = bars_5m[-1].close_time
         cached = self._market_structure_cache.get(symbol)
         if cached and cached[0] == last_time:
             return cached[1]
-        structure = market_structure(bars)
+        # Structure levels and retests are intraday; do not carry yesterday's
+        # pivots or zones into today's market scan.
+        session_date = bars_5m[-1].ts.date()
+        session_bars = [bar for bar in bars_5m if bar.ts.date() == session_date]
+        structure = market_structure(session_bars)
         self._market_structure_cache[symbol] = (last_time, structure)
         self._market_structure_last_bar[symbol] = last_time
         return structure
 
-    def market_chart(self, symbol: str, interval: int = 1) -> dict:
+    def market_chart(self, symbol: str, interval: int = 5) -> dict:
         """Completed OHLCV bars and potential structure for one subscribed symbol."""
         from src.market.structure import market_structure, resample_bars
         from src.positions.exit_engine import feed_staleness
@@ -1089,7 +1147,9 @@ class SessionRuntime:
             "candles": [{"time": b.ts.isoformat(), "open": b.open, "high": b.high,
                          "low": b.low, "close": b.close, "volume": b.volume}
                         for b in bars],
-            "structure": market_structure(bars),
+            "structure": market_structure(
+                [bar for bar in bars if bar.ts.date() == bars[-1].ts.date()] if bars else []
+            ),
             "disclaimer": "Zones and swing levels are mechanical patterns from completed "
                           "candles. They do not confirm institutional orders or predict price.",
         }
@@ -1136,23 +1196,40 @@ class SessionRuntime:
         advice = journal_store.advice_entries(limit)
         decisions = journal_store.entries(limit)
         closed_by_id = {row["position_id"]: row for row in closed}
+        setup_groups: dict[str, dict] = {}
+        habit_groups: dict[str, dict] = {}
         for decision in decisions:
             linked = closed_by_id.get(decision.get("position_id"))
             if linked:
                 decision["outcome"] = {"state": "CLOSED", "net_pnl": linked["net_pnl"],
                                        "exit_time": linked["exit_time"]}
+                pid = linked["position_id"]
+                setup = decision.get("setup_tag") or "UNSPECIFIED"
+                tags = [setup, *(decision.get("habit_tags") or [])]
+                for tag, groups in ((setup, setup_groups), *[(t, habit_groups) for t in tags[1:]]):
+                    group = groups.setdefault(tag, {"closed_trades": 0, "net": Decimal("0"), "seen": set()})
+                    if pid not in group["seen"]:
+                        group["seen"].add(pid)
+                        group["closed_trades"] += 1
+                        group["net"] += Decimal(linked["net_pnl"])
             elif decision.get("position_id"):
                 decision["outcome"] = {"state": "POSITION_NOT_CLOSED"}
         checks = self.checked_log(limit)
         gross_total = sum((Decimal(r["gross_pnl"]) for r in closed), Decimal("0"))
         net_total = sum((Decimal(r["net_pnl"]) for r in closed), Decimal("0"))
         costs_total = sum((Decimal(r["costs"]) for r in closed), Decimal("0"))
+        def tagged_results(groups: dict[str, dict]) -> list[dict]:
+            return [{"tag": tag, "closed_trades": value["closed_trades"],
+                     "net_realised": str(value["net"])}
+                    for tag, value in sorted(groups.items())]
 
         return {
             "trades": closed,
             "decisions": decisions,
             "checks": checks.get("rows", []),
             "exit_advice": advice,
+            "setup_analytics": tagged_results(setup_groups),
+            "habit_analytics": tagged_results(habit_groups),
             "analytics": {"closed_trade_count": len(closed), "gross_realised": str(gross_total),
                           "modelled_costs": str(costs_total), "net_realised": str(net_total),
                           "taken_notes": sum(d["decision"] == "TAKEN" for d in decisions),

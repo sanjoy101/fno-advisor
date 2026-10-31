@@ -929,13 +929,17 @@ Module B signal panel still requires the finding to be overturned on holdout fir
 **Owner-approved descriptive scanner (2026-10-31).** A separate market-workspace board
 may order up to 20 bullish and 20 bearish observations by a disclosed completed-bar
 price/volume formula. This is a descriptive terminal view, not Module B, not an entry
-signal, and not a claim of predictive edge. Its current formula uses first-available
-bar price change, recent-versus-prior intraday volume, and path efficiency; choppy rows
-are excluded by a fixed displayed rule. Intraday OI is unavailable and must not be
-invented or substituted with delayed daily OI. Mechanical zones, confirmed pivots, and
-equal-price references may be shown, but do not label them institutional orders or
-derive projected S1/R1/R2 advice. Keep the board isolated from entry checks, outcome
-logs, and position advice. The user explicitly selected this limited scope.
+signal, and not a claim of predictive edge. Its current formula skips the first five
+09:15 one-minute bars when available, then combines price change, recent-versus-prior
+intraday volume, and path efficiency; choppy rows are excluded by a fixed displayed
+rule. Session VWAP is descriptive context and is not part of the score. Zones and
+alerts use completed five-minute bars by default; charts offer 1/5/15-minute views.
+Zone status describes retests and closes beyond the far edge. Intraday OI is unavailable
+and must not be invented or substituted with delayed daily OI. Mechanical zones,
+confirmed pivots, and equal-price references may be shown, but do not label them
+institutional orders or derive projected S1/R1/R2 advice. Keep the board isolated from
+entry checks, outcome logs, and position advice. The user explicitly selected this
+limited scope.
 
 The descriptive `/market` view is separate from Module B: alphabetical rows report
 completed-bar movement, breadth covers fresh subscribed stock symbols, and indices are

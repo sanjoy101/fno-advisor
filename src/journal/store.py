@@ -26,6 +26,8 @@ class DecisionNote(BaseModel):
     recorded_at: datetime = Field(default_factory=now_ist)
     reference_price: float | None = Field(default=None, gt=0)
     note: str = Field(default="", max_length=1200)
+    setup_tag: str = Field(default="UNSPECIFIED", max_length=64)
+    habit_tags: list[str] = Field(default_factory=list, max_length=6)
 
     @field_validator("symbol")
     @classmethod
@@ -36,6 +38,17 @@ class DecisionNote(BaseModel):
     @classmethod
     def normalize_time(cls, value: datetime) -> datetime:
         return ensure_ist(value)
+
+    @field_validator("setup_tag")
+    @classmethod
+    def normalize_setup_tag(cls, value: str) -> str:
+        return value.strip() or "UNSPECIFIED"
+
+    @field_validator("habit_tags")
+    @classmethod
+    def normalize_habit_tags(cls, values: list[str]) -> list[str]:
+        normalized = (value.strip().upper()[:32] for value in values if value.strip())
+        return list(dict.fromkeys(normalized))[:6]
 
 
 class JournalStore:
