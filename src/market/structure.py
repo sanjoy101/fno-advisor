@@ -106,7 +106,19 @@ def market_structure(bars: Sequence[Bar], *, max_zones: int = 6) -> dict:
     atr = _atr(bars, len(bars))
     tolerance = max(typical * 0.001, (atr or 0) * 0.15)
     zones = []
+    high_cursor = low_cursor = 0
+    last_high = last_low = None
     for i in range(3, len(bars)):
+        # A pivot centered at i-3 is the newest one whose two right-hand bars
+        # existed before candidate candle i. Use the globally computed pivot list
+        # with a causal cursor instead of recalculating every prefix of the session.
+        confirmed_through = i - 3
+        while high_cursor < len(highs) and highs[high_cursor][0] <= confirmed_through:
+            last_high = highs[high_cursor][1]
+            high_cursor += 1
+        while low_cursor < len(lows) and lows[low_cursor][0] <= confirmed_through:
+            last_low = lows[low_cursor][1]
+            low_cursor += 1
         prior_atr = _atr(bars, i)
         if prior_atr is None or prior_atr <= 0:
             continue
@@ -114,12 +126,8 @@ def market_structure(bars: Sequence[Bar], *, max_zones: int = 6) -> dict:
         move = candle.high - candle.low
         if move < 1.5 * prior_atr:
             continue
-        # Pivot confirmation is causal: a two-bar right wing must already exist at
-        # the displacement candle. Looking up pivots from the full session here would
-        # let later candles confirm an earlier breakout retrospectively.
-        confirmed_highs, confirmed_lows = _pivots(bars[:i])
-        last_high = confirmed_highs[-1][1] if confirmed_highs else None
-        last_low = confirmed_lows[-1][1] if confirmed_lows else None
+        # The cursor includes only pivots whose right wing completed before i, so
+        # future bars cannot retrospectively validate an earlier breakout.
         direction = ("BULLISH" if candle.close > candle.open and last_high is not None
                      and candle.close > last_high else
                      "BEARISH" if candle.close < candle.open and last_low is not None

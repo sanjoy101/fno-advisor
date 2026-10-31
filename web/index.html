@@ -1410,6 +1410,9 @@ function MarketChart({ symbol }) {
   const W = 1000, H = 330, plotTop = 18, plotBottom = 264, volumeTop = 278, volumeBottom = 320;
   const values = candles.flatMap((b) => [b.low, b.high]);
   const structure = chart.structure || {};
+  const latest = allCandles[allCandles.length - 1];
+  const periodHigh = allCandles.length ? Math.max(...allCandles.map((b) => b.high)) : null;
+  const periodLow = allCandles.length ? Math.min(...allCandles.map((b) => b.low)) : null;
   const indexByTime = new Map(candles.map((b, i) => [b.time, i]));
   const zones = (structure.order_blocks || []).filter((z) => indexByTime.has(z.formed_at));
   const levels = [...(structure.swing_highs || []).filter((l) => l.bar >= offset).slice(-5),
@@ -1431,6 +1434,7 @@ function MarketChart({ symbol }) {
         <div className="flex items-center gap-2"><label className="text-xs text-slate-400">Candle size <select value={interval} onChange={(e) => setInterval(Number(e.target.value))} className="ml-1 rounded bg-slate-800 px-2 py-1 text-slate-100 ring-1 ring-slate-700"><option value="1">1 min</option><option value="5">5 min</option><option value="15">15 min</option></select></label><span className={`rounded-full px-3 py-1 text-xs font-bold ${chart.stale ? "bg-rose-950 text-rose-200" : "bg-emerald-950 text-emerald-200"}`}>{chart.stale ? "STALE DATA" : "FEED CURRENT"}</span></div>
       </div>
       {chart.stale && <div role="alert" className="mt-3 rounded-md bg-rose-950/70 px-3 py-2 text-sm font-bold text-rose-100">These candles are not current. Treat the displayed zones and levels as historical observations.</div>}
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4"><div className="rounded-lg bg-slate-950/60 p-3"><div className="text-[10px] uppercase text-slate-500">Latest completed close</div><b className="tabnum text-lg">{latest ? `₹${num(latest.close)}` : "—"}</b></div><div className="rounded-lg bg-slate-950/60 p-3"><div className="text-[10px] uppercase text-slate-500">Shown period high</div><b className="tabnum text-lg text-emerald-300">{periodHigh == null ? "—" : `₹${num(periodHigh)}`}</b></div><div className="rounded-lg bg-slate-950/60 p-3"><div className="text-[10px] uppercase text-slate-500">Shown period low</div><b className="tabnum text-lg text-rose-300">{periodLow == null ? "—" : `₹${num(periodLow)}`}</b></div><div className="rounded-lg bg-slate-950/60 p-3"><div className="text-[10px] uppercase text-slate-500">Latest bar volume</div><b className="tabnum text-lg">{latest ? num(latest.volume) : "—"}</b></div></div>
       <div className="mt-3 overflow-x-auto rounded-lg bg-[#080d15]">
         <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Candlesticks and volume for ${symbol}`} className="w-full min-w-[760px]">
           {[0,1,2,3].map((i) => <g key={i}><line x1="32" x2="990" y1={plotTop + i * (plotBottom - plotTop) / 3} y2={plotTop + i * (plotBottom - plotTop) / 3} stroke="#263244" strokeDasharray="3 5"/><text x="2" y={plotTop + i * (plotBottom - plotTop) / 3 + 4} fill="#64748b" fontSize="11">{num(max - i * span / 3)}</text></g>)}
@@ -1456,18 +1460,34 @@ function MarketChart({ symbol }) {
 function MarketPanel({ market }) {
   const [selected, setSelected] = useState(null);
   const [symbolQuery, setSymbolQuery] = useState("");
+  const [sectorFilter, setSectorFilter] = useState("ALL");
+  const [movementFilter, setMovementFilter] = useState("ALL");
   const [showDirectory, setShowDirectory] = useState(false);
   const [showAllUp, setShowAllUp] = useState(false);
   const [showAllDown, setShowAllDown] = useState(false);
+  const notifiedAlerts = useRef(null);
   const rows = (market && market.symbols) || [];
+  const sectors = [...new Set(rows.map((r) => r.sector || "UNKNOWN"))].sort();
+  const filteredRows = rows.filter((r) => (!symbolQuery.trim() || r.symbol.toLowerCase().includes(symbolQuery.trim().toLowerCase())) && (sectorFilter === "ALL" || (r.sector || "UNKNOWN") === sectorFilter) && (movementFilter === "ALL" || (movementFilter === "NO_DATA" ? r.state === "NO_DATA" : movementFilter === "STALE" ? r.stale : movementFilter === "UP" ? r.state === "UP_FROM_BASELINE" : movementFilter === "DOWN" ? r.state === "DOWN_FROM_BASELINE" : r.state === "AT_BASELINE")));
   const valid = rows.filter((r) => !r.stale && r.state !== "NO_DATA");
   const indexRows = (market && market.indices && market.indices.symbols) || [];
   const unavailable = !market;
   const marketActive = market && ["OPEN", "SQUARE-OFF WINDOW"].includes(market.session_state);
   const observations = marketActive ? valid : rows.filter((r) => r.state !== "NO_DATA");
-  const up = observations.filter((r) => r.state === "UP_FROM_BASELINE");
-  const down = observations.filter((r) => r.state === "DOWN_FROM_BASELINE");
+  const up = observations.filter((r) => r.state === "UP_FROM_BASELINE" && filteredRows.includes(r));
+  const down = observations.filter((r) => r.state === "DOWN_FROM_BASELINE" && filteredRows.includes(r));
   const flat = observations.filter((r) => r.state === "AT_BASELINE");
+  const alerts = (market && market.alerts) || [];
+  useEffect(() => {
+    const ids = alerts.map((a) => a.id);
+    if (notifiedAlerts.current === null) { notifiedAlerts.current = new Set(ids); return; }
+    const fresh = alerts.filter((a) => !notifiedAlerts.current.has(a.id));
+    ids.forEach((id) => notifiedAlerts.current.add(id));
+    if (fresh.length && "Notification" in window && Notification.permission === "granted") {
+      const first = fresh[0];
+      new Notification(fresh.length > 1 ? `${fresh.length} new price-structure observations` : `${first.symbol}: ${first.title}`, { body: fresh.length > 1 ? fresh.map((a) => `${a.symbol} · ${a.title}`).slice(0, 4).join("\n") : first.detail });
+    }
+  }, [market && market.asof, alerts]);
   useEffect(() => {
     if (!selected && market) {
       const preferred = indexRows.find((r) => r.symbol === "NIFTY") || indexRows[0];
@@ -1481,7 +1501,7 @@ function MarketPanel({ market }) {
       {items.length > 8 && <button type="button" onClick={onToggle} className="mt-3 rounded-lg px-3 py-2 text-xs font-bold text-sky-200 ring-1 ring-slate-700 hover:bg-slate-800">{showAll ? "Show fewer" : `Show all ${items.length}`}</button>}
     </>;
   };
-  const directoryRows = rows.filter((r) => r.symbol.toLowerCase().includes(symbolQuery.trim().toLowerCase()));
+  const directoryRows = filteredRows;
 
   return (
     <section id="overview" className="scroll-mt-36 space-y-4" aria-label="Market overview and scanner">
@@ -1501,9 +1521,11 @@ function MarketPanel({ market }) {
           <Panel title={marketActive ? "Observed up from first available bar" : "Up during the last session"}><p className="mb-2 text-xs text-slate-500">Alphabetical · completed-bar movement · descriptive only</p><SymbolRows items={up} tone="text-emerald-300" showAll={showAllUp} onToggle={() => setShowAllUp(!showAllUp)}/></Panel>
           <Panel title={marketActive ? "Observed down from first available bar" : "Down during the last session"}><p className="mb-2 text-xs text-slate-500">Alphabetical · completed-bar movement · descriptive only</p><SymbolRows items={down} tone="text-rose-300" showAll={showAllDown} onToggle={() => setShowAllDown(!showAllDown)}/></Panel>
         </div>
+        <Panel title="Live price-structure alerts"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-slate-400">New completed-bar patterns from this session · no order-book/OI data</p><button type="button" onClick={async () => { if (!("Notification" in window)) return; if (Notification.permission !== "granted") await Notification.requestPermission(); }} className="rounded-md px-3 py-1.5 text-xs font-bold text-emerald-200 ring-1 ring-emerald-700">Enable desktop alerts</button></div><p className="mt-2 text-[11px] text-slate-500">{market.alerts_disclaimer}</p>{alerts.length ? <div className="mt-3 max-h-64 divide-y divide-slate-800 overflow-auto">{alerts.map((a) => <button type="button" key={a.id} onClick={() => { setSelected(a.symbol); document.getElementById("charts")?.scrollIntoView({behavior:"smooth"}); }} className="flex w-full flex-wrap items-center justify-between gap-2 py-2 text-left hover:bg-white/[.025]"><span><b className="text-emerald-200">{a.symbol}</b><span className="ml-2 text-sm text-slate-200">{a.title}</span><span className="block text-xs text-slate-500">{a.detail}</span></span><span className="tabnum text-xs text-slate-500">{hhmmss(a.at)} · {a.price != null ? `₹${num(a.price)}` : `₹${num(a.low)}–₹${num(a.high)}`}</span></button>)}</div> : <p className="mt-3 text-sm text-slate-500">No new patterns yet. Alerts begin after the first live scan baseline and only update when completed candles arrive.</p>}</Panel>
+        <Panel title="Scanner filters"><div className="grid gap-3 sm:grid-cols-3"><label className="text-xs text-slate-400">SYMBOL SEARCH<input aria-label="Filter symbols" value={symbolQuery} onChange={(e) => setSymbolQuery(e.target.value)} placeholder="e.g. RELIANCE" className="mt-1 w-full rounded-lg bg-slate-900 px-3 py-2 text-sm text-slate-100 ring-1 ring-slate-700"/></label><label className="text-xs text-slate-400">SECTOR<select value={sectorFilter} onChange={(e) => setSectorFilter(e.target.value)} className="mt-1 w-full rounded-lg bg-slate-900 px-3 py-2 text-sm text-slate-100 ring-1 ring-slate-700"><option value="ALL">All sectors</option>{sectors.map((s) => <option key={s}>{s}</option>)}</select></label><label className="text-xs text-slate-400">OBSERVATION<select value={movementFilter} onChange={(e) => setMovementFilter(e.target.value)} className="mt-1 w-full rounded-lg bg-slate-900 px-3 py-2 text-sm text-slate-100 ring-1 ring-slate-700"><option value="ALL">All observations</option><option value="UP">Up from baseline</option><option value="DOWN">Down from baseline</option><option value="FLAT">At baseline</option><option value="STALE">Stale data</option><option value="NO_DATA">No completed bars</option></select></label></div><p className="mt-2 text-xs text-slate-500">{filteredRows.length} of {rows.length} subscribed stocks match. Select any row in the directory to open its chart.</p></Panel>
         <Panel title="Sector breadth"><p className="mb-3 text-xs text-slate-500">{market.sectors_are_historical ? "Counts from the last available completed session; historical context." : "Counts among current fresh symbols in the subscribed set."} Unknown sector mappings remain visible.</p><div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{(market.sectors || []).map((s) => <div key={s.sector} className="flex items-center justify-between rounded-lg bg-slate-950/60 px-3 py-2 text-sm"><span className="font-semibold text-slate-300">{s.sector}</span><span className="tabnum"><b className="text-emerald-300">{s.up}↑</b><span className="mx-2 text-slate-600">/</span><b className="text-rose-300">{s.down}↓</b><span className="ml-2 text-slate-500">{s.flat} flat</span></span></div>)}</div></Panel>
         {selected && <div id="charts" className="scroll-mt-36"><div className="mb-2 flex items-center justify-between"><div><h2 className="text-xl font-black">Structure workspace</h2><p className="text-xs text-slate-500">Candles, mechanical zones, and confirmed swing levels</p></div><span className="rounded-full bg-sky-400/10 px-3 py-1 text-xs font-bold text-sky-200">{selected}</span></div><MarketChart symbol={selected}/></div>}
-        <Panel title={`F&O symbol directory · ${rows.length}`}><div className="flex flex-wrap items-end justify-between gap-3"><p className="text-sm text-slate-400">Find a subscribed instrument and open its chart. Symbols are alphabetical.</p><div className="flex gap-2"><input aria-label="Search F&O symbols" value={symbolQuery} onChange={(e) => setSymbolQuery(e.target.value)} placeholder="Search symbol…" className="w-48 rounded-lg bg-slate-900 px-3 py-2 text-sm ring-1 ring-slate-700 focus:outline-none focus:ring-sky-400"/><button type="button" onClick={() => setShowDirectory(!showDirectory)} className="rounded-lg px-3 py-2 text-xs font-bold text-sky-200 ring-1 ring-slate-700 hover:bg-slate-800">{showDirectory ? "Hide list" : "Browse all"}</button></div></div>{showDirectory && <div className="mt-4 max-h-[520px] overflow-auto rounded-lg border border-slate-800"><div className="grid gap-x-4 px-3 sm:grid-cols-2 xl:grid-cols-3">{directoryRows.map((r) => <button key={r.symbol} type="button" onClick={() => setSelected(r.symbol)} className="flex items-center justify-between border-b border-slate-800 py-2 text-left hover:bg-white/[.025]"><span><b>{r.symbol}</b><span className={`ml-2 text-[10px] ${r.stale || r.state === "NO_DATA" ? "text-amber-300" : "text-slate-500"}`}>{!marketActive && r.bars ? "LAST SESSION" : r.stale ? "STALE" : r.state === "NO_DATA" ? "NO BARS" : "CURRENT"}</span></span><span className="tabnum text-xs text-slate-400">{r.change_from_baseline_pct == null ? "—" : `${signed(r.change_from_baseline_pct)}%`} →</span></button>)}</div>{directoryRows.length === 0 && <p className="p-4 text-sm text-slate-500">No symbol matches “{symbolQuery}”.</p>}</div>}</Panel>
+        <Panel title={`F&O symbol directory · ${filteredRows.length} matches`}><div className="flex flex-wrap items-end justify-between gap-3"><p className="text-sm text-slate-400">Directory uses the scanner filters above. Symbols are alphabetical.</p><button type="button" onClick={() => setShowDirectory(!showDirectory)} className="rounded-lg px-3 py-2 text-xs font-bold text-sky-200 ring-1 ring-slate-700 hover:bg-slate-800">{showDirectory ? "Hide list" : "Browse all matches"}</button></div>{showDirectory && <div className="mt-4 max-h-[520px] overflow-auto rounded-lg border border-slate-800"><div className="grid gap-x-4 px-3 sm:grid-cols-2 xl:grid-cols-3">{directoryRows.map((r) => <button key={r.symbol} type="button" onClick={() => setSelected(r.symbol)} className="flex items-center justify-between border-b border-slate-800 py-2 text-left hover:bg-white/[.025]"><span><b>{r.symbol}</b><span className={`ml-2 text-[10px] ${r.stale || r.state === "NO_DATA" ? "text-amber-300" : "text-slate-500"}`}>{!marketActive && r.bars ? "LAST SESSION" : r.stale ? "STALE" : r.state === "NO_DATA" ? "NO BARS" : "CURRENT"}</span></span><span className="tabnum text-xs text-slate-400">{r.change_from_baseline_pct == null ? "—" : `${signed(r.change_from_baseline_pct)}%`} →</span></button>)}</div>{directoryRows.length === 0 && <p className="p-4 text-sm text-slate-500">No symbols match the selected filters.</p>}</div>}</Panel>
         <p className="rounded-lg border border-slate-800 bg-slate-950/50 px-4 py-3 text-xs leading-relaxed text-slate-500">Universe: {market.coverage.universe.state === "FULL_CURRENT_MASTER" ? `full dated F&O master (${market.coverage.universe.master_symbols} stocks), as of ${market.coverage.universe.as_of}` : market.coverage.universe.state === "MAINTAINED_LIQUID_SUBSET" ? "maintained liquid F&O subset; run refresh-universe for the current full list" : market.coverage.universe.state === "MASTER_STALE_OR_INVALID" ? "saved F&O master is stale or invalid; using the subscribed set" : "custom subscribed symbol set"}. This scanner describes movement from the earliest available completed candle. It does not rank opportunities or predict returns.</p>
       </>}
     </section>

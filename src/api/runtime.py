@@ -213,6 +213,10 @@ class SessionRuntime:
         self._runtimes: dict[str, PositionRuntime] = {}
         self._last_payload: dict[str, Any] = {}
         self._last_advice_logged: dict[str, tuple[str, str]] = {}
+        self._market_structure_last_bar: dict[str, datetime] = {}
+        self._market_alert_seen_ids: set[str] = set()
+        self._market_alerts: list[dict[str, Any]] = []
+        self._market_alerts_initialized = False
         self._stopped = False
 
         if mode == Mode.REPLAY:
@@ -914,7 +918,12 @@ class SessionRuntime:
                 last_data_at=None if last is None else last.isoformat(),
             )
             row["data_age_seconds"] = None if age is None else round(age, 1)
+            row["sector"] = "INDEX" if symbol in INDEX_SYMBOLS else SECTORS.get(symbol, "UNKNOWN")
             (index_rows if symbol in INDEX_SYMBOLS else rows).append(row)
+
+        # Evaluate structure only when a new completed candle arrives. Seed existing
+        # history silently so a server restart never replays old observations as alerts.
+        alerts = self._update_market_alerts(rows) if self.mode == Mode.LIVE else []
 
         fresh = [r for r in rows if not r["stale"] and r["state"] != "NO_DATA"]
         up = sum(r["state"] == "UP_FROM_BASELINE" for r in fresh)
@@ -952,11 +961,54 @@ class SessionRuntime:
                         "symbols": index_rows,
                         "detail": "Index data is shown only when those indices are subscribed and fresh."},
             "symbols": rows,
+            "alerts": alerts,
+            "alerts_disclaimer": "Completed-candle price patterns only. Equal highs/lows are price references, not verified resting orders; no order book or open-interest data is used.",
             "ordering": "alphabetical",
             "is_ranking": False,
             "definition": "Observed completed-bar change from the earliest available bar. "
                           "Descriptive only; it is not a forecast or a trade recommendation.",
         }
+
+    def _update_market_alerts(self, rows: list[dict]) -> list[dict]:
+        from src.market.structure import market_structure
+
+        active = _session_state(self.now()) in {"OPEN", "SQUARE-OFF WINDOW"}
+        if not active:
+            return list(self._market_alerts)
+        for row in rows:
+            symbol = row["symbol"]
+            bars = self.feed.bars(symbol)
+            if not bars:
+                continue
+            last_time = bars[-1].close_time
+            if self._market_structure_last_bar.get(symbol) == last_time:
+                continue
+            structure = market_structure(bars)
+            self._market_structure_last_bar[symbol] = last_time
+            candidates = []
+            for z in structure.get("order_blocks", []):
+                candidates.append({"id": f"{symbol}|ZONE|{z['confirmed_at']}|{z['direction']}",
+                    "symbol": symbol, "kind": "POTENTIAL_ZONE", "title": f"Potential {z['direction'].lower()} zone",
+                    "at": z["confirmed_at"], "low": z["low"], "high": z["high"],
+                    "detail": f"Completed-bar displacement: {z['displacement_atr']} prior ATR; zone is the last opposite candle."})
+            for kind, levels, title in (("EQUAL_HIGH", structure.get("equal_highs", []), "Potential equal-high price reference"),
+                                         ("EQUAL_LOW", structure.get("equal_lows", []), "Potential equal-low price reference")):
+                for level in levels:
+                    pivot_index = min(level["last_bar"] + 2, len(bars) - 1)
+                    at = bars[pivot_index].close_time.isoformat()
+                    candidates.append({"id": f"{symbol}|{kind}|{at}|{level['price']}", "symbol": symbol,
+                        "kind": kind, "title": title, "at": at, "price": level["price"],
+                        "detail": f"{level['touches']} confirmed pivots within the mechanical price tolerance; not evidence of resting orders."})
+            for event in candidates:
+                if event["id"] in self._market_alert_seen_ids:
+                    continue
+                self._market_alert_seen_ids.add(event["id"])
+                if not self._market_alerts_initialized:
+                    continue
+                self._market_alerts.insert(0, event)
+        self._market_alerts_initialized = True
+        self._market_alerts = self._market_alerts[:40]
+        return list(self._market_alerts)
 
     def market_chart(self, symbol: str, interval: int = 1) -> dict:
         """Completed OHLCV bars and potential structure for one subscribed symbol."""
