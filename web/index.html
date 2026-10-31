@@ -42,6 +42,72 @@
   .desk-nav a:hover, .desk-nav a:focus-visible { color: #e8eef7; background: rgba(148,163,184,.1); outline: none; }
   .desk-card { background: linear-gradient(145deg, rgba(17,26,40,.96), rgba(11,17,28,.96)); border-color: rgba(100,116,139,.28); box-shadow: 0 12px 32px rgba(0,0,0,.16); }
   @media (max-width: 720px) { .desk-nav { width: 100%; overflow-x: auto; } }
+  /* OrderBlock-inspired visual language: near-black canvas, emerald data accents,
+     restrained green glows, and violet primary actions. */
+  :root { --ob-green: #19e6a2; --ob-green-soft: rgba(25,230,162,.16); --ob-purple: #8b5cf6; }
+  body { background: #050708; }
+  .desk-grid {
+    background-color: #050708;
+    background-image:
+      radial-gradient(ellipse at 14% 0%, rgba(0,190,128,.105), transparent 32%),
+      radial-gradient(ellipse at 88% 9%, rgba(110,62,208,.09), transparent 28%),
+      linear-gradient(rgba(148,163,184,.018) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148,163,184,.018) 1px, transparent 1px);
+    background-size: auto, auto, 40px 40px, 40px 40px;
+  }
+  header[data-testid="ops-header"] {
+    background: rgba(4,7,9,.96) !important;
+    border-bottom-color: rgba(25,230,162,.52) !important;
+    box-shadow: 0 8px 30px rgba(0,0,0,.3);
+    backdrop-filter: blur(16px);
+  }
+  header[data-testid="ops-header"] a[href="#top"] > span:first-child {
+    background: linear-gradient(145deg, #37f3b0, #00b978) !important;
+    box-shadow: 0 0 22px rgba(25,230,162,.24);
+  }
+  .desk-nav a { color: #9aa9a4; }
+  .desk-nav a:hover, .desk-nav a:focus-visible {
+    color: #d8fff0;
+    background: rgba(25,230,162,.09);
+  }
+  .desk-card {
+    background: linear-gradient(145deg, rgba(12,19,20,.97), rgba(7,11,13,.97));
+    border-color: rgba(25,230,162,.17);
+    box-shadow: 0 12px 38px rgba(0,0,0,.3), inset 0 1px rgba(255,255,255,.025);
+  }
+  .market-title {
+    color: #ecfff8;
+    background: linear-gradient(92deg, #f3fff9 4%, #83f2c9 58%, #21d99b 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 0 20px rgba(25,230,162,.12));
+  }
+  [class~="ring-slate-700"], [class~="ring-slate-600"] { --tw-ring-color: rgba(25,230,162,.19) !important; }
+  [class~="text-sky-300"] { color: #36e9ad !important; }
+  [class~="text-sky-200"] { color: #a4f8d8 !important; }
+  [class~="bg-sky-400"] {
+    background: linear-gradient(120deg, #8b5cf6, #7044df) !important;
+    color: #fff !important;
+    box-shadow: 0 7px 24px rgba(139,92,246,.22);
+  }
+  [class~="bg-sky-500"] {
+    background: linear-gradient(120deg, #8b5cf6, #7044df) !important;
+    color: #fff !important;
+  }
+  #overview .desk-card { position: relative; overflow: hidden; }
+  #overview .desk-card::after {
+    content: ""; position: absolute; inset: 0 auto auto 0; width: 100%; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(25,230,162,.48), transparent);
+    pointer-events: none;
+  }
+  #overview [id="scanner"] > div { box-shadow: 0 0 34px rgba(0,0,0,.16); }
+  #overview [id="charts"] .desk-card { box-shadow: 0 0 42px rgba(0,190,128,.055), 0 16px 42px rgba(0,0,0,.35); }
+  #overview input:focus { --tw-ring-color: rgba(25,230,162,.65) !important; }
+  @media (max-width: 720px) {
+    .desk-grid { background-size: auto, auto, 32px 32px, 32px 32px; }
+    header[data-testid="ops-header"] > div { gap: .45rem .65rem; }
+  }
 </style>
 </head>
 <body class="text-slate-100">
@@ -1592,7 +1658,7 @@ function App() {
         <section className="flex flex-wrap items-end justify-between gap-4 py-2">
           <div>
             <div className="text-xs uppercase tracking-[.22em] text-sky-300 font-bold">Your market workspace</div>
-            <h1 className="mt-1 text-3xl sm:text-4xl font-black tracking-tight text-slate-50">F&amp;O Market Desk</h1>
+            <h1 className="market-title mt-1 text-3xl sm:text-4xl font-black tracking-tight">F&amp;O Market Desk</h1>
             <p className="mt-1 text-sm sm:text-base text-slate-400">Scan the market, inspect price structure, and manage your tracked positions.</p>
           </div>
           <div className="flex items-center gap-2 rounded-full border border-slate-700 bg-slate-950/80 px-3 py-1.5 text-xs font-semibold text-slate-300">
