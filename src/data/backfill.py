@@ -281,7 +281,9 @@ class RateLimiter:
         self,
         *,
         max_per_second: float = 3.0,
-        max_per_minute: int = 100,
+        # The account in use is on Fyers Standard (50 requests/minute). Keep ten
+        # requests of headroom for other app activity and avoid walking into -360.
+        max_per_minute: int = 40,
         sleep: Callable[[float], None] = _time.sleep,
         clock: Callable[[], float] = _time.monotonic,
     ) -> None:

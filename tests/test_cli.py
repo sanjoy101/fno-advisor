@@ -903,15 +903,15 @@ def test_the_seed_estimate_matches_the_pacing_that_produces_it():
 
     limiter = RateLimiter()
     assert limiter.min_interval == pytest.approx(1.0 / 3.0)
-    assert limiter.max_per_minute == 100
+    assert limiter.max_per_minute == 40
 
     assert seed_seconds_estimate(0) == 0.0
     assert seed_seconds_estimate(1) == 0.0
-    # The per-MINUTE cap binds at every count above one -- 0.6s apart beats 0.33s --
-    # so the estimate is ~0.6s per symbol, not the per-second cap's 0.33s.
-    assert seed_seconds_estimate(6) == pytest.approx(3.0, abs=0.01)
-    assert seed_seconds_estimate(180) == pytest.approx(107.4, abs=0.5)
-    assert seed_seconds_estimate(250) == pytest.approx(149.4, abs=0.5)
+    # The per-MINUTE cap binds at every count above one -- 1.5s apart beats 0.33s --
+    # leaving headroom below the Fyers Standard plan's 50 requests/minute ceiling.
+    assert seed_seconds_estimate(6) == pytest.approx(7.5, abs=0.01)
+    assert seed_seconds_estimate(180) == pytest.approx(268.5, abs=0.5)
+    assert seed_seconds_estimate(250) == pytest.approx(373.5, abs=0.5)
 
 
 def test_duplicate_symbols_are_collapsed():

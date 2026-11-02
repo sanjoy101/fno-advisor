@@ -61,14 +61,14 @@ MODES = ("replay", "live")
 #
 #   Startup seed  <-- THIS ONE. seed_history() makes one REST history call PER SYMBOL
 #                         before the socket opens, paced by RateLimiter. Of its two
-#                         caps the per-MINUTE one binds at every count above 1 (100/min
-#                         is 0.6 s apart, against 3/s = 0.33 s), so the cost is ~0.6 s
-#                         per symbol: about 107 s -- call it two minutes -- for 180
+#                         caps the per-MINUTE one binds at every count above 1 (40/min
+#                         is 1.5 s apart, against 3/s = 0.33 s), so the cost is ~1.5 s
+#                         per symbol: about 269 s -- call it five minutes -- for 180
 #                         names, paid on every launch before the page renders. It was
 #                         unpaced until 2026-08-24, which would have put all 180
 #                         requests on the wire in a burst.
 #
-# So: yes, the full F&O universe fits. The price is ~2 minutes of startup, and that
+# So: yes, the full F&O universe fits. The price is ~5 minutes of startup, and that
 # is the only thing you are trading away.
 # --------------------------------------------------------------------------------
 
@@ -77,7 +77,7 @@ MODES = ("replay", "live")
 SOCKET_SYMBOL_CAP = 5000
 
 #: The practical guard. Comfortably above the ~180-name F&O universe, far below the
-#: socket cap, and chosen so the startup seed stays inside ~2.5 minutes. A number
+#: socket cap, and chosen so the startup seed stays inside ~6.5 minutes. A number
 #: above this is far more likely to be a typo or a pasted file than an intention.
 MAX_SYMBOLS = 250
 
@@ -85,9 +85,9 @@ MAX_SYMBOLS = 250
 SEED_WARN_SYMBOLS = 25
 
 #: RateLimiter's defaults, mirrored here so the estimate cannot silently drift from
-#: the pacing. Verified against them by a test.
+#: the pacing.
 _SEED_PER_SECOND = 3.0
-_SEED_PER_MINUTE = 100
+_SEED_PER_MINUTE = 40
 
 
 def seed_seconds_estimate(count: int) -> float:
@@ -97,7 +97,7 @@ def seed_seconds_estimate(count: int) -> float:
     whichever binds harder wins. In practice that is always the per-minute cap above
     a single symbol, but both are computed so a change to either default stays
     reflected here. Approximate by design -- it exists to set the user's expectation
-    before a silent two minutes, not to be accurate to the second.
+    before the silent seed, not to be accurate to the second.
     """
     if count <= 0:
         return 0.0
