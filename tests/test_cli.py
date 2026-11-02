@@ -858,13 +858,12 @@ def test_session_command_is_behaviourally_unchanged(capsys):
 # --------------------------------------------------------------------------------
 # What limits --symbols
 #
-# The socket takes 5000; the startup history seed is one paced REST call per symbol
-# and is what actually binds. The guard exists to catch a typo, not to keep the F&O
-# universe out -- ~180 names must fit.
+# The general application guard is separate from the Fyers plan limits: Standard live
+# streaming allows 100 symbols, Prime allows 5000; history seeding is also paced.
 # --------------------------------------------------------------------------------
 
 
-def test_the_whole_fno_universe_fits_under_the_guard():
+def test_the_application_guard_covers_the_configured_symbol_set():
     from src.api.serve import MAX_SYMBOLS, SOCKET_SYMBOL_CAP
     from src.data.backfill import LIQUID_FNO_UNIVERSE
 
@@ -873,13 +872,22 @@ def test_the_whole_fno_universe_fits_under_the_guard():
         "the guard is a practical one, well under the broker's"
 
 
-def test_a_hundred_and_eighty_symbols_are_accepted(tmp_path):
+def test_one_hundred_live_symbols_fit_the_standard_socket_cap(tmp_path):
     from src.api.serve import validate_request
     from src.positions.store import PositionStore
 
-    names = [f"SYM{i:03d}" for i in range(180)]
+    names = [f"SYM{i:03d}" for i in range(100)]
     got = validate_request(PositionStore(tmp_path), mode="live", symbols=names)
-    assert len(got) == 180
+    assert len(got) == 100
+
+
+def test_over_standard_live_socket_cap_fails_before_history_seed(tmp_path):
+    from src.api.serve import live_symbol_limit, validate_request
+    from src.positions.store import PositionStore
+
+    names = [f"SYM{i:04d}" for i in range(live_symbol_limit() + 1)]
+    with pytest.raises(ValueError, match="configured Fyers Data Socket plan limit"):
+        validate_request(PositionStore(tmp_path), mode="live", symbols=names)
 
 
 def test_past_the_guard_the_error_names_the_real_constraint(tmp_path):
@@ -888,12 +896,11 @@ def test_past_the_guard_the_error_names_the_real_constraint(tmp_path):
 
     names = [f"SYM{i:04d}" for i in range(MAX_SYMBOLS + 1)]
     with pytest.raises(ValueError) as exc:
-        validate_request(PositionStore(tmp_path), mode="live", symbols=names)
+        validate_request(PositionStore(tmp_path), mode="replay", symbols=names)
     text = str(exc.value)
     assert str(MAX_SYMBOLS) in text
-    assert "REST history call at startup" in text, \
-        "the error must say what binds, not just that a limit exists"
-    assert "5000" in text, "and that the socket is not it"
+    assert "application guard is 250" in text
+    assert "5000" in text
 
 
 def test_the_seed_estimate_matches_the_pacing_that_produces_it():
@@ -936,7 +943,7 @@ def test_the_dashboard_help_states_the_limit(capsys):
     with pytest.raises(SystemExit):
         cli.main(["dashboard", "--help"])
     out = capsys.readouterr().out
-    assert "5000" in out and "180" in out and "250" in out
+    assert "5000" in out and "100" in out and "250" in out
 
 
 # --------------------------------------------------------------------------------

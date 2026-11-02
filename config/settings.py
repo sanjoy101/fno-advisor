@@ -40,6 +40,10 @@ class FyersSettings(BaseSettings):
     secret: SecretStr = Field(description="Fyers app secret")
     redirect_uri: str = Field(description="OAuth redirect URI registered with Fyers")
 
+    #: Data Socket plan cap. Standard defaults to 100 symbols per user; after a
+    #: Prime upgrade, set FYERS_WEBSOCKET_SYMBOL_LIMIT=5000 in .env.
+    websocket_symbol_limit: int = Field(default=100, ge=1, le=5000)
+
     #: Where the daily access token is cached. Outside version control, always.
     token_path: Path = PROJECT_ROOT / "data" / ".fyers_token.json"
 

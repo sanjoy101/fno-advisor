@@ -27,7 +27,8 @@ log = logging.getLogger("fno.serve")
 
 __all__ = [
     "serve", "resolve_symbols", "DEFAULT_SYMBOLS", "MODES",
-    "SOCKET_SYMBOL_CAP", "MAX_SYMBOLS", "SEED_WARN_SYMBOLS", "seed_seconds_estimate",
+    "SOCKET_SYMBOL_CAP", "FYERS_STANDARD_SYMBOL_CAP", "MAX_SYMBOLS",
+    "SEED_WARN_SYMBOLS", "seed_seconds_estimate",
 ]
 
 #: Safe offline/replay default. A recent dated symbol-master snapshot is selected
@@ -40,14 +41,14 @@ MODES = ("replay", "live")
 # --------------------------------------------------------------------------------
 # What actually limits --symbols
 #
-# Measured on 2026-08-24, not assumed. The socket is NOT the binding constraint and
-# neither is CPU or memory; the startup history fan-out is.
+# The live limit depends on the user's Fyers plan. Standard permits 100 active Data
+# Socket symbols per user across connections; Prime permits 5,000. The API request
+# limit is separate and still controls startup history pacing.
 #
-#   Fyers websocket cap   5000 symbols. fyers_apiv3's data_ws sets symbol_limit=5000
-#                         and rejects more with "Please provide less than 5000
-#                         symbols" (defines.LIMIT_EXCEED_MSG_5000); it chunks the
-#                         subscribe into batches of 500 itself. The whole ~180-name
-#                         F&O universe is 3.6% of that. NOT binding.
+#   Fyers Standard plan   100 symbols per user across all connections. The full
+#                         refreshed F&O universe (224 including indices here) cannot
+#                         be streamed on this plan in one session. Prime's 5,000-symbol
+#                         cap is separate from the REST request limit below.
 #
 #   Evaluation per bar    NOT binding, and not even close. The per-tick loop iterates
 #                         OPEN POSITIONS, not symbols -- adding symbols costs nothing
@@ -68,13 +69,14 @@ MODES = ("replay", "live")
 #                         unpaced until 2026-08-24, which would have put all 180
 #                         requests on the wire in a burst.
 #
-# So: yes, the full F&O universe fits. The price is ~5 minutes of startup, and that
-# is the only thing you are trading away.
+# Standard users can stream a chosen set of up to 100 symbols; full-universe live
+# scanning requires a plan with a larger Data Socket subscription cap.
 # --------------------------------------------------------------------------------
 
 #: The broker's own limit, from the SDK. Documented for orientation; nothing here
 #: goes near it.
 SOCKET_SYMBOL_CAP = 5000
+FYERS_STANDARD_SYMBOL_CAP = 100
 
 #: The practical guard. Comfortably above the ~180-name F&O universe, far below the
 #: socket cap, and chosen so the startup seed stays inside ~6.5 minutes. A number
@@ -102,6 +104,16 @@ def seed_seconds_estimate(count: int) -> float:
     if count <= 0:
         return 0.0
     return max((count - 1) / _SEED_PER_SECOND, 60.0 * (count - 1) / _SEED_PER_MINUTE)
+
+
+def live_symbol_limit() -> int:
+    """Configured Fyers Data Socket plan cap; safely assume Standard if config is absent."""
+    try:
+        from config.settings import get_fyers_settings
+
+        return get_fyers_settings().websocket_symbol_limit
+    except Exception:  # noqa: BLE001 - request validation must still report safely
+        return FYERS_STANDARD_SYMBOL_CAP
 
 
 def resolve_symbols(spec: str | Sequence[str] | None, *, full_universe=None) -> list[str]:
@@ -138,8 +150,9 @@ def validate_request(
     and hide the one they did.
 
     Raises:
-        ValueError: unknown mode, replay with no date, a date with no stored bars, or
-            more than ``MAX_SYMBOLS`` symbols.
+        ValueError: unknown mode, replay with no date, a date with no stored bars,
+            more than ``MAX_SYMBOLS`` symbols, or a live Standard subscription above
+            the broker's 100-symbol plan cap.
     """
     mode = mode.lower()
     if mode not in MODES:
@@ -150,13 +163,22 @@ def validate_request(
     wanted = resolve_symbols(symbols, full_universe=full_universe)
     if not wanted:
         raise ValueError("--symbols was given but resolved to nothing usable.")
+    plan_symbol_cap = live_symbol_limit() if mode == "live" else FYERS_STANDARD_SYMBOL_CAP
+    if mode == "live" and len(wanted) > plan_symbol_cap:
+        raise ValueError(
+            f"{len(wanted)} live symbols requested, but the configured Fyers Data Socket "
+            f"plan limit is {plan_symbol_cap} active symbols per user across all "
+            f"connections. Choose a --symbols list of at most {plan_symbol_cap} total "
+            "instruments (including indices), close other Fyers data-socket clients, or "
+            "set FYERS_WEBSOCKET_SYMBOL_LIMIT to "
+            "your higher plan's cap after upgrading. This check runs before history seeding."
+        )
     if len(wanted) > MAX_SYMBOLS:
         raise ValueError(
-            f"{len(wanted)} symbols requested; the guard is {MAX_SYMBOLS}. The broker's "
-            f"socket would take {SOCKET_SYMBOL_CAP}, but every symbol costs one REST "
-            f"history call at startup, so this would seed for about "
-            f"{seed_seconds_estimate(len(wanted)) / 60:.0f} minutes before the page "
-            f"renders. The whole F&O universe is ~180 names and fits."
+            f"{len(wanted)} symbols requested; the application guard is {MAX_SYMBOLS}. "
+            "Reduce the symbol list. The library supports up to "
+            f"{SOCKET_SYMBOL_CAP} on Prime, but the application's startup-history and "
+            "resource limits are lower."
         )
     if len(wanted) > SEED_WARN_SYMBOLS and mode == "live":
         log.warning(

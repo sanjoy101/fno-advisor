@@ -823,6 +823,13 @@ def build_parser() -> argparse.ArgumentParser:
     dash = sub.add_parser(
         "dashboard",
         help="serve the web dashboard (REPLAY by default; LIVE must be asked for)",
+        description=(
+            "Fyers Standard permits up to 100 active Data Socket symbols per user "
+            "across connections; Prime permits up to 5,000. Set FYERS_WEBSOCKET_SYMBOL_LIMIT "
+            "in .env to your plan cap. LIVE checks this before "
+            "history seeding. The F&O master currently exceeds Standard's cap. "
+            "The 250-symbol app guard and REST history pacing are separate limits."
+        ),
     )
     # REPLAY is the default deliberately: it needs no token, cannot be mistaken for
     # today's market once the header renders, and a mistyped command must not open a
@@ -835,7 +842,8 @@ def build_parser() -> argparse.ArgumentParser:
     dash.add_argument("--symbols",
                       help="comma-separated; default is maintained liquid subset in "
                            "REPLAY, and a recent refreshed F&O master in LIVE (subset "
-                           "fallback). Each symbol costs one paced startup history call")
+                           "fallback). Fyers Standard live streaming allows 100 total "
+                           "symbols per user; each also costs one paced startup history call")
     dash.add_argument("--host", default="127.0.0.1", help="loopback by default; there "
                                                           "is no auth on this")
     dash.add_argument("--port", type=int, default=8000)

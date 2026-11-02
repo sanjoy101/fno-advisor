@@ -317,7 +317,8 @@ function Header({ health, connected, activePage, onNavigate }) {
             testid="feed-status"
             label="feed"
             value={feed.connected ? (stale ? "STALE" : "connected") : "DISCONNECTED"}
-            sub={`last tick ${age(feed.tick_age_seconds)}`}
+            sub={feed.last_error ? `feed issue: ${feed.last_error}` : `last tick ${age(feed.tick_age_seconds)}`}
+            title={feed.last_error || undefined}
             tone={feedBad ? "bad" : feed.connected ? "good" : "warn"}
           />
           <div className="w-px bg-slate-600" />
@@ -337,7 +338,7 @@ function Header({ health, connected, activePage, onNavigate }) {
         <Stat label="clock" value={hhmmss(h.now)} mono />
         <Stat label="event risk" value={eventState} />
         {feed.reconnects > 0 && <Stat label="reconnects" value={feed.reconnects} tone="warn" />}
-        <Stat label="socket" value={connected ? "streaming" : "reconnecting…"}
+        <Stat label="dashboard link" value={connected ? "streaming" : "reconnecting…"}
               tone={connected ? "good" : "warn"} />
         {h.replay && (
           <Stat label="replay speed" value={`${h.replay.speed}×${h.replay.finished ? " · ENDED" : ""}`} />
@@ -480,14 +481,14 @@ function HealthRow({ health, positions }) {
 }
 
 /* Bigger than Stat, and outlined. Reserved for the two silent-failure readouts. */
-function KeyStat({ label, value, sub, tone, testid }) {
+function KeyStat({ label, value, sub, tone, testid, title }) {
   const toneCls = tone === "bad" ? "text-rose-300" : tone === "warn" ? "text-amber-300"
     : tone === "good" ? "text-emerald-300" : "text-slate-300";
   return (
     <div data-testid={testid} className="leading-tight min-w-[9rem]">
       <div className="text-xs uppercase tracking-widest text-slate-400 font-semibold">{label}</div>
       <div className={`text-2xl font-black tabnum ${toneCls}`}>{value}</div>
-      <div className="text-xs text-slate-400 tabnum">{sub}</div>
+      <div className="max-w-[22rem] truncate text-xs text-slate-400 tabnum" title={title}>{sub}</div>
     </div>
   );
 }
